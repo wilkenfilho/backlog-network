@@ -3,7 +3,7 @@ name: Android Build
 on:
   push:
     branches: [main, master]
-  workflow_dispatch: # permite rodar manualmente pelo GitHub
+  workflow_dispatch:
 
 jobs:
   build:
@@ -31,21 +31,35 @@ jobs:
       - name: Instalar dependências
         run: npm install
 
-      - name: Aplicar patch expo-modules-core (Kotlin 2.x compat)
-        run: node scripts/fix-expo-modules-core.js
-
-      - name: Aplicar patch react-native JdkConfiguratorUtils
-        run: node scripts/patch-rn-jdk.js
+      - name: Aplicar patches de compatibilidade
+        run: |
+          node scripts/fix-expo-modules-core.js
+          node scripts/patch-rn-jdk.js
 
       - name: Remover autolinking aninhado conflitante
         run: |
           NESTED="node_modules/expo/node_modules/expo-modules-autolinking"
-          if [ -d "$NESTED" ]; then
-            echo "Removendo $NESTED"
-            rm -rf "$NESTED"
-          else
-            echo "Sem autolinking aninhado, OK"
-          fi
+          [ -d "$NESTED" ] && rm -rf "$NESTED" && echo "Removed" || echo "Not found"
+
+      - name: Patch expo-modules-core - forcar Kotlin 1.9.25 e suppress correto
+        run: |
+          BUILD_GRADLE="node_modules/expo-modules-core/android/build.gradle"
+          # Remove linhas antigas do suppress que possam ter sido adicionadas
+          grep -v "suppressKotlinVersionCompatibilityCheck" "$BUILD_GRADLE" > /tmp/bg_clean.gradle || true
+          grep -v "CI Patch\|=== Patch" /tmp/bg_clean.gradle > /tmp/bg_final.gradle || true
+          cp /tmp/bg_final.gradle "$BUILD_GRADLE"
+          # Adiciona suppress com versao correta 1.9.25
+          cat >> "$BUILD_GRADLE" << 'ENDPATCH'
+
+          // === CI Patch ===
+          tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
+            kotlinOptions {
+              freeCompilerArgs += ["-P", "plugin:androidx.compose.compiler.plugins.kotlin:suppressKotlinVersionCompatibilityCheck=1.9.25"]
+            }
+          }
+          ENDPATCH
+          echo "Patch aplicado"
+          tail -10 "$BUILD_GRADLE"
 
       - name: Cache Gradle
         uses: actions/cache@v4
@@ -56,7 +70,7 @@ jobs:
           key: gradle-${{ hashFiles('android/gradle/wrapper/gradle-wrapper.properties') }}
           restore-keys: gradle-
 
-      - name: Permissão gradlew
+      - name: Permissao gradlew
         run: chmod +x android/gradlew
 
       - name: Build APK Debug
