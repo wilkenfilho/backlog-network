@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout código
+      - name: Checkout codigo
         uses: actions/checkout@v4
 
       - name: Setup Node.js
@@ -28,49 +28,21 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Instalar dependências
+      - name: Instalar dependencias
         run: npm install
 
-      - name: Aplicar patches de compatibilidade
+      - name: Patch expo-modules-core e react-native
         run: |
           node scripts/fix-expo-modules-core.js
           node scripts/patch-rn-jdk.js
 
-      - name: Remover autolinking aninhado conflitante
+      - name: Remover autolinking aninhado
         run: |
           NESTED="node_modules/expo/node_modules/expo-modules-autolinking"
           [ -d "$NESTED" ] && rm -rf "$NESTED" && echo "Removed" || echo "Not found"
 
-      - name: Patch expo-modules-core build.gradle
-        run: |
-          BUILD_GRADLE="node_modules/expo-modules-core/android/build.gradle"
-          # Mostra estado atual
-          echo "=== Últimas 20 linhas do build.gradle ==="
-          tail -20 "$BUILD_GRADLE"
-          # Remove qualquer suppress antigo
-          python3 -c "
-          import re
-          with open('$BUILD_GRADLE', 'r') as f:
-              content = f.read()
-          # Remove todos os patches anteriores
-          content = re.sub(r'\n// === .*?Patch.*?\n.*?suppressKotlinVersionCompatibilityCheck.*?\n.*?\}\n.*?\}\n', '', content, flags=re.DOTALL)
-          content = re.sub(r'\n// === CI Patch.*', '', content, flags=re.DOTALL)
-          # Adiciona patch correto
-          patch = '''
-
-// === CI Patch v3 ===
-tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
-  kotlinOptions {
-    freeCompilerArgs += [\"-P\", \"plugin:androidx.compose.compiler.plugins.kotlin:suppressKotlinVersionCompatibilityCheck=1.9.25\"]
-  }
-}
-'''
-          with open('$BUILD_GRADLE', 'w') as f:
-              f.write(content + patch)
-          print('Patch aplicado com sucesso')
-          "
-          echo "=== Últimas 15 linhas após patch ==="
-          tail -15 "$BUILD_GRADLE"
+      - name: Patch Compose Kotlin compat
+        run: python3 scripts/patch-compose-compat.py
 
       - name: Cache Gradle
         uses: actions/cache@v4
@@ -85,10 +57,6 @@ tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
         run: chmod +x android/gradlew
 
       - name: Build APK Debug
-        working-directory: android
-        run: ./gradlew assembleDebug --no-daemon --info 2>&1 | grep -E "error:|FAILED|Caused by:|compileDebugKotlin|e:.*\.kt" | head -80
-
-      - name: Build APK Debug (real)
         working-directory: android
         run: ./gradlew assembleDebug --no-daemon
 
