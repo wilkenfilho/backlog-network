@@ -1,0 +1,75 @@
+{
+  "expo": {
+    "name": "BACKLOG NETWORK",
+    "slug": "backlog-network",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "scheme": "backlog-network",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0a0a0f"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.backlognetwork.app",
+      "buildNumber": "1",
+      "requireFullScreen": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "Usamos a c\u00e2mera para foto de perfil e capturas de gameplay.",
+        "NSPhotoLibraryUsageDescription": "Acesse sua galeria para compartilhar screenshots de jogos.",
+        "NSPhotoLibraryAddUsageDescription": "Salve imagens de jogos na sua galeria.",
+        "ITSAppUsesNonExemptEncryption": false
+      },
+      "config": {
+        "googleSignIn": {
+          "reservedClientId": "YOUR_GOOGLE_REVERSED_CLIENT_ID"
+        }
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0a0a0f"
+      },
+      "package": "com.backlognetwork.app",
+      "versionCode": 1,
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.VIBRATE"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-font",
+      "expo-secure-store",
+      "expo-notifications",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#0a0a0f"
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "654bf330-e67f-4dae-8be8-a49ca4fc482f"
+      }
+    },
+    "cli": {
+      "appVersionSource": "local"
+    }
+  }
+}
