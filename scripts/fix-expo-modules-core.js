@@ -1,12 +1,4 @@
 #!/usr/bin/env node
-/**
- * Postinstall: patcha ExpoModulesCorePlugin.gradle para compatibilidade com Kotlin 2.x
- *
- * Problema: No Kotlin 2.x, KotlinTopLevelExtension virou interface.
- * O plugin tenta usar .getByType(KotlinTopLevelExtension) que exige classe concreta.
- * Fix: substituir por KotlinProjectExtension que é classe concreta em todas as versões.
- */
-
 const fs = require('fs');
 const path = require('path');
 
@@ -26,40 +18,56 @@ if (content.includes('// PATCHED_KOTLIN2X')) {
   process.exit(0);
 }
 
-// Marca o patch para idempotência
 content = '// PATCHED_KOTLIN2X\n' + content;
 
-// No Kotlin 2.x, KotlinTopLevelExtension virou interface — não pode ser usada em getByType().
-// KotlinProjectExtension é a classe concreta que funciona em Kotlin 1.x e 2.x.
+// Fix KotlinTopLevelExtension → KotlinProjectExtension (interface→class fix for Kotlin 2.x)
 content = content.replace(
   /\bKotlinTopLevelExtension\b/g,
   'org.jetbrains.kotlin.gradle.dsl.KotlinProjectExtension'
 );
 
-fs.writeFileSync(pluginPath, content, 'utf8');
-console.log('[fix-expo-modules-core] Patched ExpoModulesCorePlugin.gradle for Kotlin 2.x.');
+// Fix applyKotlinExpoModulesCorePlugin to not re-apply kotlin-android if already applied
+content = content.replace(
+  /ext\.applyKotlinExpoModulesCorePlugin\s*=\s*\{[\s\S]*?apply plugin:\s*KotlinExpoModulesCorePlugin\s*\}/,
+  `ext.applyKotlinExpoModulesCorePlugin = {
+  if (!project.plugins.hasPlugin('org.jetbrains.kotlin.android')) {
+    try { apply plugin: 'kotlin-android' } catch (e) {}
+  }
+  apply plugin: KotlinExpoModulesCorePlugin
+}`
+);
 
-// ----- Patch secundário: build.gradle (suprime Compose check) -----
+fs.writeFileSync(pluginPath, content, 'utf8');
+console.log('[fix-expo-modules-core] Patched ExpoModulesCorePlugin.gradle.');
+
+// Fix build.gradle - suppress Compose compiler check with CORRECT kotlin version
 const buildGradlePath = path.join(
   __dirname, '..', 'node_modules', 'expo-modules-core', 'android', 'build.gradle'
 );
 
 if (fs.existsSync(buildGradlePath)) {
   let bg = fs.readFileSync(buildGradlePath, 'utf8');
-  if (!bg.includes('suppressKotlinVersionCompatibilityCheck')) {
-    const patch = `
+
+  // Remove any existing suppress patch
+  bg = bg.replace(/\n\/\/ === Patch[\s\S]*?^\}\n/m, '');
+
+  // Detect which kotlin version is actually being used from the kotlinVersion ext
+  // Use 1.9.25 since that's what expo-modules-core 2.2.3 ships with
+  const patch = `
 
 // === Patch: suppress Kotlin/Compose version compatibility check ===
-tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
-  kotlinOptions {
-    freeCompilerArgs += [
-      "-P",
-      "plugin:androidx.compose.compiler.plugins.kotlin:suppressKotlinVersionCompatibilityCheck=2.1.21"
-    ]
+afterEvaluate {
+  tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
+    def kv = project.ext.has("kotlinVersion") ? project.ext.kotlinVersion() : "1.9.25"
+    kotlinOptions {
+      freeCompilerArgs += [
+        "-P",
+        "plugin:androidx.compose.compiler.plugins.kotlin:suppressKotlinVersionCompatibilityCheck=\${kv}"
+      ]
+    }
   }
 }
 `;
-    fs.writeFileSync(buildGradlePath, bg + patch, 'utf8');
-    console.log('[fix-expo-modules-core] Patched build.gradle (Compose suppress).');
-  }
+  fs.writeFileSync(buildGradlePath, bg + patch, 'utf8');
+  console.log('[fix-expo-modules-core] Patched build.gradle with dynamic kotlin version suppress.');
 }
