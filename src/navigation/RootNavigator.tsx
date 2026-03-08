@@ -59,44 +59,54 @@ function CustomTabBar({ state, descriptors, navigation }: any) {
   const insets = useSafeAreaInsets();
   return (
     <View style={[styles.tabBar, { paddingBottom: insets.bottom + 8, ...Shadows.navBar }]}>
-      {state.routes.map((route: any, index: number) => {
-        const isFocused = state.index === index;
-        const tab = TABS[index];
-        const scale = useSharedValue(1);
-
-        const animStyle = useAnimatedStyle(() => ({
-          transform: [{ scale: scale.value }],
-        }));
-
-        const handlePress = () => {
-          scale.value = withSpring(0.85, { damping: 10 }, () => {
-            scale.value = withSpring(1, { damping: 12 });
-          });
-          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-          const event = navigation.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
-          if (!isFocused && !event.defaultPrevented) navigation.navigate(route.name);
-        };
-
-        return (
-          <TouchableOpacity
-            key={route.key}
-            onPress={handlePress}
-            activeOpacity={1}
-            style={styles.tabItem}
-          >
-            <Animated.View style={[styles.tabItemInner, animStyle]}>
-              {isFocused && <View style={styles.tabActiveIndicator} />}
-              <Text style={[styles.tabIcon, isFocused && styles.tabIconActive]}>
-                {isFocused ? tab.activeIcon : tab.icon}
-              </Text>
-              <Text style={[styles.tabLabel, isFocused && styles.tabLabelActive]}>
-                {tab.label}
-              </Text>
-            </Animated.View>
-          </TouchableOpacity>
-        );
-      })}
+      {state.routes.map((route: any, index: number) => (
+        <TabButton
+          key={route.key}
+          route={route}
+          index={index}
+          isFocused={state.index === index}
+          navigation={navigation}
+        />
+      ))}
     </View>
+  );
+}
+
+function TabButton({ route, index, isFocused, navigation }: {
+  route: any; index: number; isFocused: boolean; navigation: any;
+}) {
+  const tab = TABS[index];
+  const scale = useSharedValue(1);
+
+  const animStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+  }));
+
+  const handlePress = () => {
+    scale.value = withSpring(0.85, { damping: 10 }, () => {
+      scale.value = withSpring(1, { damping: 12 });
+    });
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    const event = navigation.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
+    if (!isFocused && !event.defaultPrevented) navigation.navigate(route.name);
+  };
+
+  return (
+    <TouchableOpacity
+      onPress={handlePress}
+      activeOpacity={1}
+      style={styles.tabItem}
+    >
+      <Animated.View style={[styles.tabItemInner, animStyle]}>
+        {isFocused && <View style={styles.tabActiveIndicator} />}
+        <Text style={[styles.tabIcon, isFocused && styles.tabIconActive]}>
+          {isFocused ? tab.activeIcon : tab.icon}
+        </Text>
+        <Text style={[styles.tabLabel, isFocused && styles.tabLabelActive]}>
+          {tab.label}
+        </Text>
+      </Animated.View>
+    </TouchableOpacity>
   );
 }
 

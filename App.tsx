@@ -1,4 +1,4 @@
-import React, { useEffect, useCallback } from 'react';
+import React, { useEffect } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -39,7 +39,7 @@ const queryClient = new QueryClient({
 });
 
 export default function App() {
-  const [fontsLoaded, setFontsLoaded] = React.useState(false);
+  const [appReady, setAppReady] = React.useState(false);
   const { loadUser } = useAuthStore();
 
   useEffect(() => {
@@ -57,25 +57,21 @@ export default function App() {
       } catch (e) {
         console.warn('Font/auth load error:', e);
       } finally {
-        setFontsLoaded(true);
+        setAppReady(true);
+        // Hide splash directly — don't rely on onLayout (unreliable on Android)
+        await SplashScreen.hideAsync();
       }
     }
     prepare();
   }, []);
 
-  const onLayoutRootView = useCallback(async () => {
-    if (fontsLoaded) {
-      await SplashScreen.hideAsync();
-    }
-  }, [fontsLoaded]);
-
-  if (!fontsLoaded) return null;
+  if (!appReady) return null;
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <QueryClientProvider client={queryClient}>
-          <View style={{ flex: 1, backgroundColor: Colors.bg }} onLayout={onLayoutRootView}>
+          <View style={{ flex: 1, backgroundColor: Colors.bg }}>
             <StatusBar style="light" />
             <RootNavigator />
           </View>

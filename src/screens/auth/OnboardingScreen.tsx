@@ -5,11 +5,9 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { BlurView } from 'expo-blur';
 import * as Haptics from 'expo-haptics';
 
 import { Colors, Fonts, Spacing, Radius } from '../../theme';
-import { useAuthStore } from '../../store/authStore';
 
 const { width: W, height: H } = Dimensions.get('window');
 
@@ -23,7 +21,6 @@ const FEATURES = [
 export default function OnboardingScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<any>();
-  const { loginWithApple, loginWithGoogle } = useAuthStore();
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(40)).current;
