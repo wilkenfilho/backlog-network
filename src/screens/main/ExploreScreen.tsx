@@ -134,8 +134,21 @@ export default function ExploreScreen() {
       const raw = res.data?.data ?? res.data ?? res ?? [];
       return Array.isArray(raw) ? raw : [];
     },
-    enabled: activeTab === 'users',
+    enabled: activeTab === 'users' && debouncedSearch.length < 2,
   });
+
+  // User search when typing in users tab
+  const { data: userSearchResults, isLoading: userSearchLoading } = useQuery({
+    queryKey: ['users-search', debouncedSearch],
+    queryFn: () => usersService.search(debouncedSearch),
+    select: (res: any) => {
+      const raw = res.data?.data ?? res.data ?? res ?? [];
+      return Array.isArray(raw) ? raw : [];
+    },
+    enabled: activeTab === 'users' && debouncedSearch.length >= 2,
+  });
+
+  const usersToShow = debouncedSearch.length >= 2 ? (userSearchResults ?? []) : (usersData ?? []);
 
   // Use search results when searching, trending otherwise
   const isSearching = debouncedSearch.length >= 2;
@@ -322,7 +335,7 @@ export default function ExploreScreen() {
       {/* USERS TAB */}
       {activeTab === 'users' && (
         <FlatList
-          data={usersData ?? []}
+          data={usersToShow}
           keyExtractor={(item: any) => String(item.id)}
           renderItem={({ item }) => (
             <TouchableOpacity style={styles.userCard} onPress={() => navigation.navigate('UserProfile', { userId: item.id })} activeOpacity={0.85}>
@@ -341,9 +354,13 @@ export default function ExploreScreen() {
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
           ListEmptyComponent={() => (
-            usersLoading
+            (usersLoading || userSearchLoading)
               ? <View style={{ padding: 40, alignItems: 'center' }}><ActivityIndicator color={Colors.accent} size="large" /></View>
-              : <EmptyState emoji="👥" title="Sem sugestões" subtitle="Explore mais para encontrar pessoas!" />
+              : <EmptyState
+                  emoji="👥"
+                  title={debouncedSearch.length >= 2 ? `Nenhum resultado para "${debouncedSearch}"` : 'Sem sugestões'}
+                  subtitle={debouncedSearch.length >= 2 ? 'Tente buscar com outro nome.' : 'Busque por nome ou username acima!'}
+                />
           )}
         />
       )}
