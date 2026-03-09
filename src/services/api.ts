@@ -257,15 +257,45 @@ export const communitiesService = {
 };
 
 export const topicsService = {
-  async list(communityId: string, params?: object) { return (await api.get('/topics', { params: { community_id: communityId, ...params as any } })).data; },
-  async get(topicId: string, page = 1) { return (await api.get(`/topics/${topicId}`, { params: { page } })).data; },
-  async create(data: object) { return (await api.post('/topics', data)).data; },
-  async reply(topicId: string, body: string, parentId?: string) { return (await api.post(`/topics/${topicId}/replies`, { body, parent_id: parentId })).data; },
-  async like(topicId: string) { await api.post(`/topics/${topicId}/like`); },
-  async unlike(topicId: string) { await api.delete(`/topics/${topicId}/like`); },
-  async remove(topicId: string, reason?: string) { await api.delete(`/topics/${topicId}`, { data: { reason } }); },
-  async pin(topicId: string) { return (await api.patch(`/topics/${topicId}/pin`)).data; },
-  async report(topicId: string, reason: string, description?: string) { await api.post(`/topics/${topicId}/report`, { reason, description }); },
+  async list(communityId: string, params?: object) {
+    return (await api.get('/topics', { params: { community_id: communityId, ...params } })).data;
+  },
+  async get(topicId: string, page = 1) {
+    return (await api.get(`/topics/${topicId}`, { params: { page } })).data;
+  },
+  async create(data: { community_id: string; title: string; body: string }) {
+    return (await api.post('/topics', data)).data;
+  },
+  async update(topicId: string, data: { title?: string; body?: string }) {
+    return (await api.patch(`/topics/${topicId}`, data)).data;
+  },
+  async remove(topicId: string, reason?: string) {
+    await api.delete(`/topics/${topicId}`, { data: { reason } });
+  },
+  async like(topicId: string) {
+    await api.post(`/topics/${topicId}/like`);
+  },
+  async unlike(topicId: string) {
+    await api.delete(`/topics/${topicId}/like`);
+  },
+  async pin(topicId: string) {
+    return (await api.patch(`/topics/${topicId}/pin`)).data;
+  },
+  async reply(topicId: string, body: string, parentId?: string) {
+    return (await api.post(`/topics/${topicId}/replies`, { body, parent_id: parentId })).data;
+  },
+  async likeReply(replyId: string) {
+    await api.post(`/topics/replies/${replyId}/like`);
+  },
+  async unlikeReply(replyId: string) {
+    await api.delete(`/topics/replies/${replyId}/like`);
+  },
+  async removeReply(replyId: string) {
+    await api.delete(`/topics/replies/${replyId}`);
+  },
+  async report(topicId: string, reason: string, description?: string) {
+    await api.post(`/topics/${topicId}/report`, { reason, description });
+  },
 };
 
 export const scrapsService = {

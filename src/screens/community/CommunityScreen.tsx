@@ -17,14 +17,11 @@ import { useAuthStore } from '../../store/authStore';
 import { timeAgo } from '../../utils/helpers';
 import { communitiesService, topicsService } from '../../services/api';
 
-// ─── TYPES ───────────────────────────────────────────────────────────────────
 type Role = 'owner' | 'admin' | 'mod' | 'member' | 'banned' | null;
-
 interface StaffMember {
   id: string; username: string; display_name: string;
   avatar_url?: string; role: Role;
 }
-
 interface Topic {
   id: string; title: string; body: string; user_id: string;
   username: string; display_name: string; avatar_url?: string;
@@ -316,7 +313,10 @@ export default function CommunityScreen() {
           {isMember && (
             <TouchableOpacity
               style={styles.newTopicBtn}
-              onPress={() => navigation.navigate('TopicCreate', { communityId: community.id ?? communityId })}
+              onPress={() => navigation.navigate('TopicCreate', {
+                communityId: community.id ?? communityId,
+                communityName: community.name
+              })}
             >
               <LinearGradient colors={[Colors.accent, Colors.accentDark]} style={styles.newTopicGradient}>
                 <Text style={styles.newTopicText}>+ Novo tópico</Text>
