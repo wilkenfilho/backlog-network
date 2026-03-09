@@ -10,6 +10,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
+import * as FileSystem from 'expo-file-system';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Image } from 'expo-image';
 
@@ -294,7 +295,6 @@ function StoriesRow() {
       // In React Native, use expo-file-system to read base64, NOT FileReader
       let imageUrl = imageUri;
       try {
-        const FileSystem = require('expo-file-system');
         const base64 = await FileSystem.readAsStringAsync(imageUri, { encoding: FileSystem.EncodingType.Base64 });
         const up = await uploadService.uploadImage(base64);
         imageUrl = up?.url ?? up?.image_url ?? imageUri;
