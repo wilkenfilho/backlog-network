@@ -171,7 +171,7 @@ export const uploadService = {
   async uploadImage(base64: string) { return (await api.post('/upload', { image_base64: base64 })).data; },
 };
 
-export const rawgService = {\n  RAWG_KEY: '089962d8173c4418813243d5de18e7eb',\n  BASE: 'https://api.rawg.io/api',\n\n  async search(q: string) {\n    const res = await axios.get(`${rawgService.BASE}/games`, {\n      params: { key: rawgService.RAWG_KEY, search: q, page_size: 20 },\n    });\n    return (res.data.results ?? []).map((g: any) => ({\n      id: String(g.id),\n      title: g.name,\n      developer: g.developers?.[0]?.name ?? '',\n      coverUrl: g.background_image,\n      cover_url: g.background_image,\n      rating: g.rating,\n      rawg_rating: g.rating,\n      genres: g.genres?.map((x: any) => x.name) ?? [],\n      platforms: g.platforms?.map((x: any) => x.platform.name) ?? [],\n      released: g.released,\n      rawg_id: g.id,\n    }));\n  },\n\n  async getTrending() {\n    const res = await axios.get(`${rawgService.BASE}/games`, {\n      params: {\n        key: rawgService.RAWG_KEY,\n        ordering: '-added',\n        page_size: 20,\n        dates: `${new Date().getFullYear() - 1}-01-01,${new Date().toISOString().split('T')[0]}`,\n      },\n    });\n    return (res.data.results ?? []).map((g: any) => ({\n      id: String(g.id),\n      title: g.name,\n      developer: g.developers?.[0]?.name ?? '',\n      coverUrl: g.background_image,\n      cover_url: g.background_image,\n      rating: g.rating,\n      rawg_rating: g.rating,\n      genres: g.genres?.map((x: any) => x.name) ?? [],\n      platforms: g.platforms?.map((x: any) => x.platform.name) ?? [],\n      released: g.released,\n      rawg_id: g.id,\n    }));\n  },\n\n  async getGame(rawgId: string) {\n    const res = await axios.get(`${rawgService.BASE}/games/${rawgId}`, {\n      params: { key: rawgService.RAWG_KEY },\n    });\n    const g = res.data;\n    return {\n      id: String(g.id),\n      title: g.name,\n      developer: g.developers?.[0]?.name ?? '',\n      publisher: g.publishers?.[0]?.name ?? '',\n      coverUrl: g.background_image,\n      cover_url: g.background_image,\n      rating: g.rating,\n      rawg_rating: g.rating,\n      description: g.description_raw ?? g.description ?? '',\n      genres: g.genres?.map((x: any) => x.name) ?? [],\n      platforms: g.platforms?.map((x: any) => x.platform.name) ?? [],\n      released: g.released,\n      metacritic: g.metacritic,\n      rawg_id: g.id,\n      screenshots: g.short_screenshots?.map((s: any) => s.image) ?? [],\n    };\n  },\n};\n\n
+export const storiesService = {
   async getStories() { return (await api.get('/stories')).data; },
   async createStory(data: any) { return (await api.post('/stories', data)).data; },
   async deleteStory(id: string) { await api.delete(`/stories/${id}`); },
@@ -186,3 +186,76 @@ export const listsService = {
   async addGame(listId: string, gameId: string, notes?: string) { return api.post(`/lists/${listId}/items`, { game_id: gameId, notes }); },
   async removeGame(listId: string, itemId: string) { return api.delete(`/lists/${listId}/items/${itemId}`); },
 };
+
+export const rawgService = {
+  RAWG_KEY: '089962d8173c4418813243d5de18e7eb',
+  BASE: 'https://api.rawg.io/api',
+
+  async search(q: string) {
+    const res = await axios.get(`${rawgService.BASE}/games`, {
+      params: { key: rawgService.RAWG_KEY, search: q, page_size: 20 },
+    });
+    return (res.data.results ?? []).map((g: any) => ({
+      id: String(g.id),
+      title: g.name,
+      developer: g.developers?.[0]?.name ?? '',
+      coverUrl: g.background_image,
+      cover_url: g.background_image,
+      rating: g.rating,
+      rawg_rating: g.rating,
+      genres: g.genres?.map((x: any) => x.name) ?? [],
+      platforms: g.platforms?.map((x: any) => x.platform.name) ?? [],
+      released: g.released,
+      rawg_id: g.id,
+    }));
+  },
+
+  async getTrending() {
+    const res = await axios.get(`${rawgService.BASE}/games`, {
+      params: {
+        key: rawgService.RAWG_KEY,
+        ordering: '-added',
+        page_size: 20,
+        dates: `${new Date().getFullYear() - 1}-01-01,${new Date().toISOString().split('T')[0]}`,
+      },
+    });
+    return (res.data.results ?? []).map((g: any) => ({
+      id: String(g.id),
+      title: g.name,
+      developer: g.developers?.[0]?.name ?? '',
+      coverUrl: g.background_image,
+      cover_url: g.background_image,
+      rating: g.rating,
+      rawg_rating: g.rating,
+      genres: g.genres?.map((x: any) => x.name) ?? [],
+      platforms: g.platforms?.map((x: any) => x.platform.name) ?? [],
+      released: g.released,
+      rawg_id: g.id,
+    }));
+  },
+
+  async getGame(rawgId: string) {
+    const res = await axios.get(`${rawgService.BASE}/games/${rawgId}`, {
+      params: { key: rawgService.RAWG_KEY },
+    });
+    const g = res.data;
+    return {
+      id: String(g.id),
+      title: g.name,
+      developer: g.developers?.[0]?.name ?? '',
+      publisher: g.publishers?.[0]?.name ?? '',
+      coverUrl: g.background_image,
+      cover_url: g.background_image,
+      rating: g.rating,
+      rawg_rating: g.rating,
+      description: g.description_raw ?? g.description ?? '',
+      genres: g.genres?.map((x: any) => x.name) ?? [],
+      platforms: g.platforms?.map((x: any) => x.platform.name) ?? [],
+      released: g.released,
+      metacritic: g.metacritic,
+      rawg_id: g.id,
+      screenshots: g.short_screenshots?.map((s: any) => s.image) ?? [],
+    };
+  },
+};
+
