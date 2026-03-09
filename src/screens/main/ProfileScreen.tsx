@@ -200,7 +200,9 @@ export default function ProfileScreen({ route }: any) {
 
   const { data: reviewsData, refetch: refetchReviews } = useQuery({
     queryKey: ['reviews', userId],
-    queryFn: () => reviewsService.getUserReviews(userId!),
+    queryFn: () => isMyProfile
+      ? reviewsService.getMyReviews()
+      : reviewsService.getUserReviews(userId!),
     enabled: !!userId && activeTab === 'reviews',
     select: (res: any) => res.data?.data ?? res.data ?? [],
   });
@@ -234,7 +236,7 @@ export default function ProfileScreen({ route }: any) {
   };
 
   const handleRefresh = async () => {
-    await Promise.all([refetchProfile(), refetchBacklog(), refetchReviews()]);
+    await Promise.all([refetchProfile(), refetchBacklog(), refetchReviews(), refetchLists()]);
   };
 
   // ─── HEADER component (shared for FlatList) ────────────────────────────
@@ -396,7 +398,7 @@ export default function ProfileScreen({ route }: any) {
     if (activeTab === 'posts') return <PostCard post={item} profile={profile} />;
     if (activeTab === 'backlog') return <BacklogItem item={item} onPress={() => navigation.navigate('GameDetail', { gameId: item.game_id })} />;
     if (activeTab === 'reviews') return <ReviewCard review={item} onPress={() => navigation.navigate('ReviewDetail', { reviewId: item.id })} />;
-    if (activeTab === 'listas') return <ListCard list={item} onPress={() => navigation.navigate('ListDetail', { listId: item.id })} />;
+    if (activeTab === 'listas') return <ListCard list={item} onPress={() => navigation.navigate('ListDetail', { listId: item.id, list: item })} />;
     return null;
   };
 

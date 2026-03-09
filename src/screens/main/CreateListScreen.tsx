@@ -30,7 +30,9 @@ export default function CreateListScreen() {
 
   const createMutation = useMutation({
     mutationFn: (data: any) => listsService.create(data),
-    onSuccess: () => {
+    onSuccess: (newList: any) => {
+      // Invalidate all user-lists queries so profile tab refreshes immediately
+      queryClient.invalidateQueries({ queryKey: ['user-lists'] });
       queryClient.invalidateQueries({ queryKey: ['lists'] });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       navigation.goBack();

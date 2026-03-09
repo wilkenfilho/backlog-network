@@ -84,7 +84,7 @@ export const feedService = {
   async likePost(postId: string) { await api.post(`/posts/${postId}/like`); },
   async unlikePost(postId: string) { await api.delete(`/posts/${postId}/like`); },
   async getComments(postId: string, page = 1) { return (await api.get(`/posts/${postId}/comments`, { params: { page } })).data; },
-  async addComment(postId: string, text: string, parentId?: string) { return (await api.post(`/posts/${postId}/comments`, { text, parent_id: parentId })).data; },
+  async addComment(postId: string, text: string, parentId?: string) { return (await api.post(`/posts/${postId}/comments`, { text, body: text, parent_id: parentId ?? null })).data; },
 };
 
 export const gamesService = {
@@ -191,10 +191,20 @@ export const communitiesService = {
   async get(idOrSlug: string) { return (await api.get(`/communities/${idOrSlug}`)).data; },
   async create(data: object) {
     try {
-      return (await api.post('/communities', data)).data;
+      const res = await api.post('/communities', data);
+      const result = res.data;
+      // Some backends return 200 with success:false
+      if (result && result.success === false) {
+        const msg = result.error ?? result.message ?? 'Erro ao criar comunidade';
+        throw new Error(typeof msg === 'object' ? JSON.stringify(msg) : String(msg));
+      }
+      return result;
     } catch (err: any) {
+      if (err instanceof Error && !(err as any).isAxiosError) throw err; // Re-throw our custom errors
       const d = err?.response?.data;
-      const msg = (typeof d === 'string' ? d : null) ?? d?.error ?? d?.message ?? err?.message ?? 'Erro ao criar comunidade';
+      const msg = (typeof d === 'string' && d.length < 500 ? d : null)
+        ?? d?.error ?? d?.message ?? d?.errors
+        ?? err?.message ?? 'Erro ao criar comunidade';
       throw new Error(typeof msg === 'object' ? JSON.stringify(msg) : String(msg).slice(0, 300));
     }
   },
@@ -236,7 +246,14 @@ export const messagesService = {
       return (await api.get('/messages', { params: { with: withUserId, page } })).data;
     }
   },
-  async send(toUserId: string, body: string, imageUrl?: string) { return (await api.post('/messages', { to_user_id: toUserId, body, image_url: imageUrl })).data; },
+  async send(toUserId: string, body: string, imageUrl?: string) {
+    try {
+      return (await api.post('/messages', { to_user_id: toUserId, body, message: body, image_url: imageUrl ?? null })).data;
+    } catch (err: any) {
+      const msg = err?.response?.data?.error ?? err?.response?.data?.message ?? err?.message ?? 'Erro ao enviar mensagem';
+      throw new Error(typeof msg === 'object' ? JSON.stringify(msg) : String(msg));
+    }
+  },
   async startConversation(toUserId: string, body: string) {
     return (await api.post('/messages', { to_user_id: toUserId, body })).data;
   },
@@ -264,6 +281,14 @@ export const storiesService = {
 export const listsService = {
   async getMyLists() { return api.get('/lists/me'); },
   async getUserLists(userId: string) { return api.get(`/users/${userId}/lists`); },
+  async getList(listId: string) {
+    try { return (await api.get(`/lists/${listId}`)).data; }
+    catch { return null; }
+  },
+  async getItems(listId: string) {
+    try { return (await api.get(`/lists/${listId}/items`)).data; }
+    catch { return { data: [] }; }
+  },
   async create(data: { title: string; description?: string | null; list_type?: string; is_public?: boolean }) {
     try {
       const payload: any = { title: data.title };

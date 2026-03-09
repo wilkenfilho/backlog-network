@@ -58,13 +58,8 @@ export default function CreateCommunityScreen() {
       navigation.goBack();
     },
     onError: (error: any) => {
-      const serverMsg = error?.response?.data?.message
-        ?? error?.response?.data?.error
-        ?? error?.response?.data
-        ?? error?.message
-        ?? 'Não foi possível criar a comunidade.';
-      const detail = typeof serverMsg === 'object' ? JSON.stringify(serverMsg) : String(serverMsg);
-      Alert.alert('Erro ao criar comunidade', detail);
+      const detail = error?.message ?? 'Não foi possível criar a comunidade.';
+      Alert.alert('Erro ao criar comunidade', String(detail).slice(0, 400));
     },
   });
 

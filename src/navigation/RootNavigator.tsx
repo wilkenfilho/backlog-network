@@ -39,6 +39,7 @@ import EditProfileScreen from '../screens/main/EditProfileScreen';
 import NotificationsScreen from '../screens/main/NotificationsScreen';
 import CreatePostScreen from '../screens/main/CreatePostScreen';
 import CreateListScreen from '../screens/main/CreateListScreen';
+import ListDetailScreen from '../screens/main/ListDetailScreen';
 import ReviewCreateScreen from '../screens/main/ReviewCreateScreen';
 
 // ─── STACKS ───────────────────────────────────────────────────────────────────
@@ -174,6 +175,7 @@ export default function RootNavigator() {
             <RootStack.Screen name="EditProfile" component={EditProfileScreen} options={{ presentation: 'modal', animation: 'slide_from_bottom' }} />
             <RootStack.Screen name="CreatePost" component={CreatePostScreen} options={{ presentation: 'modal', animation: 'slide_from_bottom' }} />
             <RootStack.Screen name="CreateList" component={CreateListScreen} options={{ presentation: 'modal', animation: 'slide_from_bottom' }} />
+            <RootStack.Screen name="ListDetail" component={ListDetailScreen} options={{ animation: 'slide_from_right' }} />
             <RootStack.Screen name="Community" component={CommunityScreen} options={{ animation: 'slide_from_right' }} />
             <RootStack.Screen name="Communities" component={CommunitiesScreen} options={{ animation: 'slide_from_right' }} />
             <RootStack.Screen name="CreateCommunity" component={CreateCommunityScreen} options={{ presentation: 'modal', animation: 'slide_from_bottom' }} />

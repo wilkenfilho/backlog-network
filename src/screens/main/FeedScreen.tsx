@@ -98,15 +98,22 @@ function PostCard({ post, onLike, onComment, onShare, onGamePress, onUserPress, 
   const [likeCount, setLikeCount] = useState(post.likesCount);
   const scale = useRef(new Animated.Value(1)).current;
 
+  // Sync if server data changes (e.g. after refetch)
+  React.useEffect(() => {
+    setLiked(post.isLiked ?? false);
+    setLikeCount(post.likesCount ?? 0);
+  }, [post.id]);
+
   const handleLike = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     Animated.sequence([
       Animated.spring(scale, { toValue: 1.35, useNativeDriver: true, speed: 50 }),
       Animated.spring(scale, { toValue: 1, useNativeDriver: true, speed: 30 }),
     ]).start();
-    setLiked(!liked);
-    setLikeCount((c: number) => liked ? c - 1 : c + 1);
-    onLike(post.id);
+    const newLiked = !liked;
+    setLiked(newLiked);
+    setLikeCount((c: number) => newLiked ? c + 1 : c - 1);
+    onLike(post.id, newLiked); // pass new desired state
   };
 
   const displayName = post.user?.displayName || post.user?.display_name || post.user?.username || 'Usuário';
@@ -420,11 +427,31 @@ export default function FeedScreen() {
 
   const posts = feedData ?? [];
 
-  const handleLike = useCallback((postId: string) => {
-    const post = posts.find((p: any) => p.id === postId);
-    if (post?.isLiked) feedService.unlikePost(postId).catch(() => {});
-    else feedService.likePost(postId).catch(() => {});
-  }, [posts]);
+  const handleLike = useCallback((postId: string, nowLiked: boolean) => {
+    // Optimistically update the query cache
+    queryClient.setQueryData(['feed', activeTab], (old: any) => {
+      if (!old) return old;
+      const raw = old?.data ?? old;
+      if (Array.isArray(raw)) {
+        const updated = raw.map((p: any) =>
+          p.id === postId
+            ? { ...p, liked_by_me: nowLiked, likes_count: (p.likes_count ?? 0) + (nowLiked ? 1 : -1) }
+            : p
+        );
+        return old?.data !== undefined ? { ...old, data: updated } : updated;
+      }
+      return old;
+    });
+    if (nowLiked) {
+      feedService.likePost(postId).catch(() => {
+        queryClient.invalidateQueries({ queryKey: ['feed', activeTab] });
+      });
+    } else {
+      feedService.unlikePost(postId).catch(() => {
+        queryClient.invalidateQueries({ queryKey: ['feed', activeTab] });
+      });
+    }
+  }, [posts, activeTab, queryClient]);
 
   const handleDeletePost = async () => {
     if (!menuPost) return;

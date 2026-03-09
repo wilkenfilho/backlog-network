@@ -226,6 +226,7 @@ export function MessagesScreen() {
 // ─── CHAT SCREEN ─────────────────────────────────────────────────────────────
 function ChatScreen({ conv, onBack }: { conv: Conversation; onBack: () => void }) {
   const insets = useSafeAreaInsets();
+  const navigation = useNavigation<any>();
   const { user } = useAuthStore();
   const [text, setText] = useState('');
   const listRef = useRef<FlatList>(null);
@@ -298,7 +299,7 @@ function ChatScreen({ conv, onBack }: { conv: Conversation; onBack: () => void }
           <Text style={styles.chatHeaderName}>{conv.other_name || conv.other_username}</Text>
           <Text style={styles.chatHeaderStatus}>@{conv.other_username}</Text>
         </View>
-        <TouchableOpacity style={styles.headerBtn}>
+        <TouchableOpacity style={styles.headerBtn} onPress={() => navigation.navigate('UserProfile', { userId: conv.other_id, username: conv.other_username })}>
           <Text style={{ fontSize: 18 }}>👤</Text>
         </TouchableOpacity>
       </View>

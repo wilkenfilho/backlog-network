@@ -204,7 +204,7 @@ export type RootStackParamList = {
   ReviewCreate: { gameId?: string; game?: any };
   PostDetail: { postId: string };
   Comments: { postId: string };
-  ListDetail: { listId: string };
+  ListDetail: { listId: string; list?: any };
   Search: { initialQuery?: string };
   Settings: undefined;
   EditProfile: undefined;

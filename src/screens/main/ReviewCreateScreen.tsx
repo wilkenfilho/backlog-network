@@ -54,7 +54,7 @@ export default function ReviewCreateScreen({ route }: any) {
   const createMutation = useMutation({
     mutationFn: (data: any) => reviewsService.createReview(data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['reviews'] });
+      queryClient.invalidateQueries({ queryKey: ['reviews'] }); // invalidates ['reviews', userId] too
       queryClient.invalidateQueries({ queryKey: ['feed'] });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       navigation.goBack();
