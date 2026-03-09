@@ -60,9 +60,13 @@ export default function ReviewCreateScreen({ route }: any) {
       navigation.goBack();
     },
     onError: (e: any) => {
-      const status = (e as any)?.response?.status;
+      const status = e?.status ?? e?.response?.status;
       if (status === 409) {
-        Alert.alert('Review duplicada', 'Você já escreveu uma review para este jogo. Edite a existente ou escolha outro jogo.');
+        Alert.alert(
+          'Review já existe',
+          'Você já escreveu uma review para este jogo. Acesse seu perfil > Reviews para editá-la.',
+          [{ text: 'Ver meu perfil', onPress: () => navigation.navigate('Profile') }, { text: 'OK', style: 'cancel' }]
+        );
       } else {
         Alert.alert('Erro', e?.message ?? 'Não foi possível publicar a review.');
       }

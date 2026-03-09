@@ -1,25 +1,30 @@
 import React, { useCallback, useRef, useState } from 'react';
 import {
-  View, Text, FlatList, StyleSheet, TouchableOpacity,
-  RefreshControl, Pressable, Animated, Modal, Share, Alert,
+  View, Text, FlatList, StyleSheet, TouchableOpacity, ScrollView,
+  RefreshControl, Animated, Modal, Share, Alert, Image as RNImage,
+  Dimensions, Pressable,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import * as Haptics from 'expo-haptics';
+import * as ImagePicker from 'expo-image-picker';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Image } from 'expo-image';
 
-import { Colors, Fonts, Spacing, Radius, Shadows, Typography } from '../../theme';
-import { Avatar, StatusBadge, GameCover, StarRating, ProgressBar, EmptyState, Skeleton } from '../../components';
-import { feedService } from '../../services/api';
+import { Colors, Fonts, Spacing, Radius, Shadows } from '../../theme';
+import { Avatar, StatusBadge, GameCover, StarRating, ProgressBar, EmptyState } from '../../components';
+import { feedService, storiesService, uploadService } from '../../services/api';
 import api from '../../services/api';
 import { useAuthStore } from '../../store/authStore';
 import type { Post, GameStatus } from '../../types';
 
+const { width: SW } = Dimensions.get('window');
+
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 function timeAgo(dateStr: string): string {
+  if (!dateStr) return '';
   const diff = (Date.now() - new Date(dateStr).getTime()) / 1000;
   if (diff < 60) return 'agora';
   if (diff < 3600) return `há ${Math.floor(diff / 60)}min`;
@@ -27,110 +32,99 @@ function timeAgo(dateStr: string): string {
   return `há ${Math.floor(diff / 86400)}d`;
 }
 
-// ─── POST MENU MODAL ──────────────────────────────────────────────────────────
-function PostMenuModal({
-  visible, onClose, post, isOwner,
-  onDelete, onEdit, onReport, onCopyText,
-}: {
-  visible: boolean; onClose: () => void; post: Post | null; isOwner: boolean;
-  onDelete: () => void; onEdit: () => void; onReport: () => void; onCopyText: () => void;
-}) {
-  if (!post) return null;
+// Normalize a raw post from any backend shape
+function normalizePost(p: any): Post {
+  const u = p.user ?? {};
+  return {
+    ...p,
+    id: String(p.id),
+    text: p.content ?? p.text ?? '',
+    type: p.type ?? 'status_update',
+    user: {
+      id: String(p.user_id ?? u.id ?? p.id),
+      username: u.username ?? p.username ?? p.user_username ?? '',
+      displayName: u.display_name ?? u.displayName ?? p.display_name ?? p.user_display_name ?? u.username ?? p.username ?? 'Usuário',
+      display_name: u.display_name ?? p.display_name ?? u.username ?? p.username ?? '',
+      avatar: u.avatar_url ?? u.avatar ?? p.avatar_url ?? p.user_avatar_url,
+      avatarUrl: u.avatar_url ?? u.avatar ?? p.avatar_url ?? p.user_avatar_url,
+      level: u.level ?? p.level ?? p.user_level ?? 1,
+    },
+    game: p.game_id ? {
+      id: String(p.game_id),
+      title: p.game_title ?? p.game_name ?? '',
+      developer: p.game_dev ?? '',
+      coverUrl: p.game_cover,
+    } : null,
+    status: p.status ?? (p.game_id ? 'playing' : undefined),
+    isLiked: !!p.liked_by_me,
+    likesCount: Number(p.likes_count ?? 0),
+    commentsCount: Number(p.comments_count ?? 0),
+    sharesCount: 0,
+    progress: p.progress ? Number(p.progress) : undefined,
+    hoursPlayed: p.hours_played ? Number(p.hours_played) : undefined,
+    createdAt: p.created_at ?? '',
+  };
+}
 
+// ─── POST MENU MODAL ──────────────────────────────────────────────────────────
+function PostMenuModal({ visible, onClose, post, isOwner, onDelete, onReport, onCopyText }: any) {
+  if (!post) return null;
   const options = [
     { icon: '📋', label: 'Copiar texto', onPress: onCopyText },
-    ...(isOwner ? [
-      { icon: '✏️', label: 'Editar post', onPress: onEdit },
-      { icon: '🗑️', label: 'Excluir post', onPress: onDelete, danger: true },
-    ] : [
-      { icon: '🚩', label: 'Denunciar', onPress: onReport },
-    ]),
+    ...(isOwner
+      ? [{ icon: '🗑️', label: 'Excluir post', onPress: onDelete, danger: true }]
+      : [{ icon: '🚩', label: 'Denunciar', onPress: onReport }]),
   ];
-
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={menuStyles.overlay} onPress={onClose}>
-        <View style={menuStyles.sheet}>
-          <View style={menuStyles.handle} />
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable style={styles.menuOverlay} onPress={onClose}>
+        <View style={styles.menuSheet}>
+          <View style={styles.menuHandle} />
           {options.map((opt, i) => (
-            <TouchableOpacity
-              key={i}
-              style={menuStyles.option}
-              onPress={() => { onClose(); opt.onPress(); }}
-              activeOpacity={0.7}
-            >
-              <Text style={menuStyles.optionIcon}>{opt.icon}</Text>
-              <Text style={[menuStyles.optionLabel, (opt as any).danger && menuStyles.optionDanger]}>
-                {opt.label}
-              </Text>
+            <TouchableOpacity key={i} style={styles.menuItem} onPress={() => { opt.onPress(); onClose(); }}>
+              <Text style={styles.menuIcon}>{opt.icon}</Text>
+              <Text style={[styles.menuLabel, (opt as any).danger && { color: Colors.red }]}>{opt.label}</Text>
             </TouchableOpacity>
           ))}
-          <TouchableOpacity style={menuStyles.cancelBtn} onPress={onClose}>
-            <Text style={menuStyles.cancelText}>Cancelar</Text>
-          </TouchableOpacity>
         </View>
       </Pressable>
     </Modal>
   );
 }
 
-const menuStyles = StyleSheet.create({
-  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
-  sheet: {
-    backgroundColor: Colors.surface, borderTopLeftRadius: Radius.xxl, borderTopRightRadius: Radius.xxl,
-    paddingHorizontal: Spacing.lg, paddingBottom: 40, paddingTop: Spacing.md,
-  },
-  handle: { width: 36, height: 4, borderRadius: 2, backgroundColor: Colors.border, alignSelf: 'center', marginBottom: 20 },
-  option: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: Colors.border },
-  optionIcon: { fontSize: 20, width: 28, textAlign: 'center' },
-  optionLabel: { fontFamily: Fonts.bodyMedium, fontSize: 15, color: Colors.text },
-  optionDanger: { color: Colors.red },
-  cancelBtn: { marginTop: 12, paddingVertical: 14, alignItems: 'center', backgroundColor: Colors.bg, borderRadius: Radius.lg },
-  cancelText: { fontFamily: Fonts.bodyBold, fontSize: 15, color: Colors.muted },
-});
-
 // ─── POST CARD ────────────────────────────────────────────────────────────────
-function PostCard({ post, onLike, onComment, onShare, onGamePress, onUserPress, onMore }: {
-  post: Post;
-  onLike: (id: string) => void;
-  onComment: (id: string) => void;
-  onShare: (post: Post) => void;
-  onGamePress: (game: any) => void;
-  onUserPress: (user: any) => void;
-  onMore: (post: Post) => void;
-}) {
+function PostCard({ post, onLike, onComment, onShare, onGamePress, onUserPress, onMore }: any) {
   const [liked, setLiked] = useState(post.isLiked ?? false);
   const [likeCount, setLikeCount] = useState(post.likesCount);
-  const likeScale = useRef(new Animated.Value(1)).current;
+  const scale = useRef(new Animated.Value(1)).current;
 
   const handleLike = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     Animated.sequence([
-      Animated.spring(likeScale, { toValue: 1.35, useNativeDriver: true, speed: 50 }),
-      Animated.spring(likeScale, { toValue: 1, useNativeDriver: true, speed: 30 }),
+      Animated.spring(scale, { toValue: 1.35, useNativeDriver: true, speed: 50 }),
+      Animated.spring(scale, { toValue: 1, useNativeDriver: true, speed: 30 }),
     ]).start();
     setLiked(!liked);
-    setLikeCount(c => liked ? c - 1 : c + 1);
+    setLikeCount((c: number) => liked ? c - 1 : c + 1);
     onLike(post.id);
   };
 
-  const displayName = (post.user as any)?.displayName || (post.user as any)?.display_name || post.user?.username || '?';
-  const username = post.user?.username || '?';
+  const displayName = post.user?.displayName || post.user?.display_name || post.user?.username || 'Usuário';
+  const username = post.user?.username || '';
 
   return (
     <View style={styles.card}>
-      {/* Header */}
       <View style={styles.cardHeader}>
         <Avatar user={post.user} size={40} onPress={() => onUserPress(post.user)} />
         <View style={styles.cardHeaderInfo}>
           <TouchableOpacity onPress={() => onUserPress(post.user)}>
             <Text style={styles.cardDisplayName}>{displayName}</Text>
           </TouchableOpacity>
-          <Text style={styles.cardTime}>@{username} · {timeAgo(post.createdAt)}</Text>
+          <Text style={styles.cardTime}>{username ? `@${username} · ` : ''}{timeAgo(post.createdAt)}</Text>
         </View>
         {post.status && <StatusBadge status={post.status} />}
         <TouchableOpacity style={styles.moreBtn} onPress={() => onMore(post)}>
-          <Text style={{ color: Colors.muted, fontSize: 18, lineHeight: 18 }}>···</Text>
+          <Text style={{ color: Colors.muted, fontSize: 18 }}>···</Text>
         </TouchableOpacity>
       </View>
 
@@ -141,29 +135,16 @@ function PostCard({ post, onLike, onComment, onShare, onGamePress, onUserPress, 
             <Text style={styles.gameTitle} numberOfLines={2}>{post.game.title}</Text>
             <Text style={styles.gameDev} numberOfLines={1}>{post.game.developer}</Text>
             {post.hoursPlayed != null && (
-              <View style={styles.gameStat}><Text style={styles.gameStatText}>⏱ {post.hoursPlayed}h jogadas</Text></View>
+              <Text style={styles.gameStatText}>⏱ {post.hoursPlayed}h</Text>
             )}
-            {post.type === 'review' && post.review && <StarRating rating={post.review.rating} />}
-            <View style={styles.platformRow}>
-              {post.game.platforms?.slice(0, 3).map(p => (
-                <View key={p} style={styles.platformBadge}><Text style={styles.platformText}>{p}</Text></View>
-              ))}
-            </View>
           </View>
         </TouchableOpacity>
       )}
 
-      {post.text && <Text style={styles.cardText}>{post.text}</Text>}
-
-      {post.progress != null && post.status === 'finished' && (
-        <View style={styles.progressBlock}><ProgressBar progress={post.progress} label="Progresso da platina" color={Colors.accent} /></View>
-      )}
-      {post.progress != null && post.status === 'playing' && (
-        <View style={styles.progressBlock}><ProgressBar progress={post.progress} label="Progresso" color={Colors.purple} /></View>
-      )}
+      {!!post.text && <Text style={styles.cardText}>{post.text}</Text>}
 
       <View style={styles.cardFooter}>
-        <Animated.View style={{ transform: [{ scale: likeScale }] }}>
+        <Animated.View style={{ transform: [{ scale }] }}>
           <TouchableOpacity style={styles.actionBtn} onPress={handleLike}>
             <Text style={[styles.actionIcon, liked && { color: Colors.red }]}>{liked ? '♥' : '♡'}</Text>
             <Text style={[styles.actionCount, liked && { color: Colors.red }]}>{likeCount}</Text>
@@ -175,69 +156,243 @@ function PostCard({ post, onLike, onComment, onShare, onGamePress, onUserPress, 
         </TouchableOpacity>
         <TouchableOpacity style={styles.actionBtn} onPress={() => onShare(post)}>
           <Text style={styles.actionIcon}>↗</Text>
-          <Text style={styles.actionCount}>{post.sharesCount}</Text>
         </TouchableOpacity>
-        <View style={{ flex: 1 }} />
-        <TouchableOpacity style={styles.bookmarkBtn}><Text style={{ color: Colors.muted, fontSize: 18 }}>🔖</Text></TouchableOpacity>
       </View>
     </View>
   );
 }
 
-// ─── STORIES ──────────────────────────────────────────────────────────────────
-function StoriesRow() {
-  const navigation = useNavigation<any>();
-  const { data: storiesData } = useQuery({
-    queryKey: ['stories'],
-    queryFn: async () => { try { return (await api.get('/stories')).data; } catch { return { data: [] }; } },
-    select: (res: any) => res.data ?? [],
-  });
-  const grouped = Object.values(
-    (storiesData ?? []).reduce((acc: any, s: any) => {
-      if (!acc[s.user_id]) acc[s.user_id] = { ...s, count: 1 };
-      else acc[s.user_id].count++;
-      return acc;
-    }, {})
-  );
+// ─── STORIES VIEWER ──────────────────────────────────────────────────────────
+function StoriesViewer({ stories, startIdx, onClose }: { stories: any[]; startIdx: number; onClose: () => void }) {
+  const insets = useSafeAreaInsets();
+  const { user } = useAuthStore();
+  const [current, setCurrent] = useState(startIdx);
+  const [reply, setReply] = useState('');
+  const prog = useRef(new Animated.Value(0)).current;
+
+  React.useEffect(() => {
+    prog.setValue(0);
+    Animated.timing(prog, { toValue: 1, duration: 5000, useNativeDriver: false }).start(({ finished }) => {
+      if (finished) next();
+    });
+  }, [current]);
+
+  const next = () => { if (current < stories.length - 1) setCurrent(c => c + 1); else onClose(); };
+  const prev = () => { if (current > 0) setCurrent(c => c - 1); };
+
+  const story = stories[current];
+  if (!story) return null;
+
+  const isMe = String(story.user_id) === String((user as any)?.id);
+  const expiresAt = new Date(story.created_at).getTime() + 24 * 60 * 60 * 1000;
+  const expired = Date.now() > expiresAt;
 
   return (
-    <FlatList
-      horizontal showsHorizontalScrollIndicator={false}
-      data={grouped} keyExtractor={(item: any) => item.id}
-      contentContainerStyle={styles.storiesContainer}
-      ListHeaderComponent={() => (
-        <TouchableOpacity style={styles.storyItem} activeOpacity={0.8} onPress={() => navigation.navigate('CreatePost')}>
-          <View style={[styles.storyRing, { borderColor: Colors.border, borderWidth: 2, borderStyle: 'dashed' }]}>
-            <View style={styles.storyAvatarPlaceholder}><Text style={{ color: Colors.muted, fontSize: 22 }}>+</Text></View>
+    <Modal visible animationType="fade" onRequestClose={onClose}>
+      <View style={{ flex: 1, backgroundColor: '#000' }}>
+        {/* Progress bar */}
+        <View style={[styles.storyProgressRow, { paddingTop: insets.top + 8 }]}>
+          {stories.map((_, i) => (
+            <View key={i} style={styles.storyProgressTrack}>
+              <Animated.View style={[styles.storyProgressFill, {
+                width: i < current ? '100%' : i === current ? prog.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }) : '0%',
+              }]} />
+            </View>
+          ))}
+        </View>
+
+        {/* Story user */}
+        <View style={styles.storyUserRow}>
+          <Avatar user={{ username: story.username, displayName: story.display_name, avatarUrl: story.avatar_url } as any} size={36} />
+          <Text style={styles.storyViewerName}>{story.display_name ?? story.username}</Text>
+          <Text style={styles.storyViewerTime}>{timeAgo(story.created_at)}</Text>
+          {isMe && <Text style={styles.storyViewerViews}>👁 {story.views_count ?? 0}</Text>}
+          <TouchableOpacity onPress={onClose} style={{ marginLeft: 'auto' as any }}>
+            <Text style={{ color: '#fff', fontSize: 22 }}>✕</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Story image */}
+        <Pressable style={{ flex: 1 }} onPress={next}>
+          <View style={styles.storyTouchSplit}>
+            <Pressable style={{ flex: 1 }} onPress={prev} />
+            <Pressable style={{ flex: 3 }} onPress={next} />
           </View>
-          <Text style={styles.storyName}>Você</Text>
+          {story.image_url ? (
+            <Image source={{ uri: story.image_url }} style={StyleSheet.absoluteFill as any} contentFit="contain" />
+          ) : (
+            <LinearGradient colors={[Colors.purple + 'aa', Colors.bg + 'aa']} style={StyleSheet.absoluteFill}>
+              <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+                <Text style={{ fontSize: 60 }}>📸</Text>
+              </View>
+            </LinearGradient>
+          )}
+          {expired && (
+            <View style={styles.storyExpiredBanner}>
+              <Text style={styles.storyExpiredText}>Esta story expirou</Text>
+            </View>
+          )}
+        </Pressable>
+
+        {/* Reactions */}
+        <View style={[styles.storyBottom, { paddingBottom: insets.bottom + 12 }]}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }} contentContainerStyle={{ gap: 8, paddingHorizontal: 16 }}>
+            {['❤️', '🔥', '😂', '😱', '👏', '🎮'].map(emoji => (
+              <TouchableOpacity key={emoji} style={styles.storyReactionBtn}
+                onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }}>
+                <Text style={{ fontSize: 22 }}>{emoji}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+          <View style={styles.storyReplyRow}>
+            <View style={styles.storyReplyInput}>
+              <Text style={{ color: Colors.muted, fontFamily: Fonts.body }}>Responder...</Text>
+            </View>
+            <TouchableOpacity style={styles.storyReplyBtn} onPress={() => { Haptics.selectionAsync(); }}>
+              <Text style={{ color: Colors.accent, fontSize: 16 }}>↑</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+// ─── STORIES ROW ──────────────────────────────────────────────────────────────
+function StoriesRow() {
+  const navigation = useNavigation<any>();
+  const { user } = useAuthStore();
+  const queryClient = useQueryClient();
+  const [viewerIdx, setViewerIdx] = useState<number | null>(null);
+  const [flatStories, setFlatStories] = useState<any[]>([]);
+
+  const { data: storiesData } = useQuery({
+    queryKey: ['stories'],
+    queryFn: async () => {
+      try { return (await api.get('/stories')).data; } catch { return []; }
+    },
+    select: (res: any) => {
+      const arr = res?.data ?? (Array.isArray(res) ? res : []);
+      // Filter to 24h stories only
+      const now = Date.now();
+      return arr.filter((s: any) => {
+        const age = now - new Date(s.created_at).getTime();
+        return age < 24 * 60 * 60 * 1000;
+      });
+    },
+  });
+
+  const uploadMutation = useMutation({
+    mutationFn: async (imageUri: string) => {
+      // In React Native, use expo-file-system to read base64, NOT FileReader
+      let imageUrl = imageUri;
+      try {
+        const FileSystem = require('expo-file-system');
+        const base64 = await FileSystem.readAsStringAsync(imageUri, { encoding: FileSystem.EncodingType.Base64 });
+        const up = await uploadService.uploadImage(base64);
+        imageUrl = up?.url ?? up?.image_url ?? imageUri;
+      } catch {
+        // If upload fails, use local URI directly (won't persist but shows for current session)
+      }
+      return storiesService.createStory({ image_url: imageUrl, duration: 5 });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['stories'] });
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    },
+    onError: (e: any) => Alert.alert('Erro', e?.message ?? 'Não foi possível publicar a story.'),
+  });
+
+  const handleAddStory = async () => {
+    Haptics.selectionAsync();
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) { Alert.alert('Permissão necessária', 'Permita acesso às fotos nas configurações.'); return; }
+    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.7, base64: false });
+    if (!result.canceled && result.assets[0]) {
+      uploadMutation.mutate(result.assets[0].uri);
+    }
+  };
+
+  // Group by user
+  const grouped = Object.values(
+    (storiesData ?? []).reduce((acc: any, s: any) => {
+      if (!acc[s.user_id]) acc[s.user_id] = { ...s, stories: [s] };
+      else acc[s.user_id].stories.push(s);
+      return acc;
+    }, {})
+  ) as any[];
+
+  const openStories = (groupIdx: number) => {
+    const all = grouped.flatMap((g: any) => g.stories);
+    setFlatStories(all);
+    let offset = 0;
+    for (let i = 0; i < groupIdx; i++) offset += grouped[i].stories.length;
+    setViewerIdx(offset);
+  };
+
+  return (
+    <>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.storiesContainer}>
+        {/* Add story button */}
+        <TouchableOpacity style={styles.storyItem} activeOpacity={0.8} onPress={handleAddStory}>
+          <View style={styles.storyAddRing}>
+            {uploadMutation.isPending
+              ? <Text style={{ color: Colors.accent, fontSize: 18 }}>⏳</Text>
+              : (user as any)?.avatar_url || (user as any)?.avatarUrl
+                ? <Image source={{ uri: (user as any).avatar_url ?? (user as any).avatarUrl }} style={styles.storyAddImg} contentFit="cover" />
+                : <Text style={{ color: Colors.muted, fontSize: 26 }}>+</Text>
+            }
+            <View style={styles.storyAddPlus}><Text style={{ color: '#0a0a0f', fontSize: 12, fontWeight: '700' }}>+</Text></View>
+          </View>
+          <Text style={styles.storyName}>Sua story</Text>
         </TouchableOpacity>
+
+        {grouped.map((group: any, gIdx: number) => {
+          const hasNew = group.stories.some((s: any) => !s.viewed_by_me);
+          return (
+            <TouchableOpacity key={group.user_id} style={styles.storyItem} activeOpacity={0.8} onPress={() => openStories(gIdx)}>
+              <LinearGradient
+                colors={hasNew ? [Colors.accent, Colors.purple] : [Colors.border, Colors.border]}
+                style={styles.storyRing}
+              >
+                <View style={styles.storyImgWrapper}>
+                  {group.image_url
+                    ? <Image source={{ uri: group.image_url }} style={styles.storyImg} contentFit="cover" />
+                    : <Avatar user={{ username: group.username, displayName: group.display_name, avatarUrl: group.avatar_url } as any} size={50} />
+                  }
+                </View>
+              </LinearGradient>
+              <Text style={styles.storyName} numberOfLines={1}>{group.display_name ?? group.username}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
+
+      {viewerIdx !== null && flatStories.length > 0 && (
+        <StoriesViewer stories={flatStories} startIdx={viewerIdx} onClose={() => setViewerIdx(null)} />
       )}
-      renderItem={({ item }: any) => (
-        <TouchableOpacity style={styles.storyItem} activeOpacity={0.8}>
-          <LinearGradient colors={[Colors.accent, Colors.purple]} style={styles.storyRing}>
-            <Avatar user={{ username: item.username, displayName: item.display_name, avatarUrl: item.avatar_url } as any} size={50} />
-          </LinearGradient>
-          <Text style={styles.storyName} numberOfLines={1}>{item.display_name ?? item.username}</Text>
-        </TouchableOpacity>
-      )}
-      ListEmptyComponent={null}
-    />
+    </>
   );
 }
 
 // ─── COMPOSER STRIP ──────────────────────────────────────────────────────────
-function ComposerStrip({ user, onPostPress, onReviewPress, onStatusPress }: { user: any; onPostPress: () => void; onReviewPress: () => void; onStatusPress: () => void }) {
+function ComposerStrip({ user, onPostPress, onReviewPress, onStatusPress }: any) {
   return (
     <View style={styles.composerWrapper}>
       <TouchableOpacity style={styles.composerMain} onPress={onPostPress} activeOpacity={0.85}>
         <Avatar user={user} size={36} />
-        <View style={styles.composerInput}><Text style={styles.composerPlaceholder}>O que você tá jogando?</Text></View>
+        <View style={styles.composerInput}>
+          <Text style={styles.composerPlaceholder}>No que você está pensando?</Text>
+        </View>
       </TouchableOpacity>
       <View style={styles.composerActions}>
-        <TouchableOpacity style={styles.composerActionBtn} onPress={onReviewPress}><Text style={styles.composerActionText}>✍️ Escrever review</Text></TouchableOpacity>
+        <TouchableOpacity style={styles.composerActionBtn} onPress={onReviewPress}>
+          <Text style={styles.composerActionText}>✍️ Review</Text>
+        </TouchableOpacity>
         <View style={styles.composerDivider} />
-        <TouchableOpacity style={styles.composerActionBtn} onPress={onStatusPress}><Text style={styles.composerActionText}>🎮 Status de jogo</Text></TouchableOpacity>
+        <TouchableOpacity style={styles.composerActionBtn} onPress={onStatusPress}>
+          <Text style={styles.composerActionText}>🎮 Status de jogo</Text>
+        </TouchableOpacity>
       </View>
     </View>
   );
@@ -259,91 +414,36 @@ export default function FeedScreen() {
     queryFn: () => feedService.getFeed({ filter: activeTab }),
     select: (res: any) => {
       const raw = res.data?.data ?? res.data ?? [];
-      return raw.map((p: any) => ({
-        ...p,
-        id: String(p.id),
-        text: p.content ?? p.text,
-        type: p.type ?? 'status_update',
-        user: {
-          id: String(p.user_id),
-          username: p.username ?? '',
-          displayName: p.display_name ?? p.username ?? '',
-          display_name: p.display_name ?? p.username ?? '',
-          avatar: p.avatar_url,
-          avatarUrl: p.avatar_url,
-          level: p.level ?? 1,
-        },
-        game: p.game_id ? {
-          id: String(p.game_id),
-          title: p.game_title ?? p.game_name ?? '',
-          developer: p.game_dev ?? '',
-          coverUrl: p.game_cover,
-        } : null,
-        status: p.status ?? (p.game_id ? 'playing' : undefined),
-        isLiked: !!p.liked_by_me,
-        likesCount: Number(p.likes_count ?? 0),
-        commentsCount: Number(p.comments_count ?? 0),
-        sharesCount: 0,
-        progress: p.progress ? Number(p.progress) : undefined,
-        hoursPlayed: p.hours_played ? Number(p.hours_played) : undefined,
-        createdAt: p.created_at,
-      }));
+      return (Array.isArray(raw) ? raw : []).map(normalizePost);
     },
   });
 
-  const posts = feedData && feedData.length > 0 ? feedData : [];
+  const posts = feedData ?? [];
 
-  const handleRefresh = useCallback(async () => { await refetch(); }, [refetch]);
-
-  const handleLike = (postId: string) => {
+  const handleLike = useCallback((postId: string) => {
     const post = posts.find((p: any) => p.id === postId);
     if (post?.isLiked) feedService.unlikePost(postId).catch(() => {});
     else feedService.likePost(postId).catch(() => {});
-  };
+  }, [posts]);
 
-  const handleComment = (postId: string) => { navigation.navigate('Comments', { postId }); };
-
-  const handleShare = async (post: Post) => {
-    try {
-      const gameText = post.game ? ` sobre ${post.game.title}` : '';
-      const userName = (post.user as any)?.displayName || post.user?.username || '';
-      await Share.share({ message: `${userName}${gameText}: "${post.text ?? ''}" — via BACKLOG NETWORK` });
-    } catch {}
-  };
-
-  const handleMore = (post: Post) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setMenuPost(post);
-    setMenuVisible(true);
-  };
-
-  const handleDeletePost = () => {
+  const handleDeletePost = async () => {
     if (!menuPost) return;
-    Alert.alert('Excluir post', 'Tem certeza? Essa ação é irreversível.', [
-      { text: 'Cancelar', style: 'cancel' },
-      { text: 'Excluir', style: 'destructive', onPress: async () => {
-        try {
-          await api.delete(`/posts/${menuPost.id}`);
-          queryClient.invalidateQueries({ queryKey: ['feed'] });
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        } catch { Alert.alert('Erro', 'Não foi possível excluir o post.'); }
-      }},
-    ]);
+    try {
+      await api.delete(`/posts/${menuPost.id}`);
+      queryClient.invalidateQueries({ queryKey: ['feed'] });
+    } catch { Alert.alert('Erro', 'Não foi possível excluir.'); }
   };
-
-  const handleGamePress = (game: any) => { navigation.navigate('GameDetail', { gameId: game.id, game }); };
-  const handleUserPress = (postUser: any) => { navigation.navigate('UserProfile', { userId: postUser.id, username: postUser.username }); };
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
-      <BlurView intensity={60} tint="dark" style={styles.header}>
+      <BlurView intensity={80} tint="dark" style={styles.header}>
         <Text style={styles.headerTitle}>FEED</Text>
         <View style={styles.headerRight}>
           <TouchableOpacity style={styles.headerBtn} onPress={() => navigation.navigate('Messages')}>
             <Text style={{ fontSize: 20 }}>💬</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.headerBtn} onPress={() => navigation.navigate('Notifications')}>
-            <Text style={{ fontSize: 20 }}>🔔</Text><View style={styles.notifDot} />
+            <Text style={{ fontSize: 20 }}>🔔</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.headerBtn} onPress={() => navigation.navigate('Search')}>
             <Text style={{ fontSize: 20 }}>🔍</Text>
@@ -352,18 +452,30 @@ export default function FeedScreen() {
       </BlurView>
 
       <FlatList
-        data={posts} keyExtractor={item => item.id}
+        data={posts}
+        keyExtractor={(item: any) => item.id}
         renderItem={({ item }) => (
-          <PostCard post={item} onLike={handleLike} onComment={handleComment} onShare={handleShare}
-            onGamePress={handleGamePress} onUserPress={handleUserPress} onMore={handleMore} />
+          <PostCard post={item}
+            onLike={handleLike}
+            onComment={(id: string) => navigation.navigate('Comments', { postId: id })}
+            onShare={async (post: Post) => {
+              const name = post.user?.displayName || post.user?.username || '';
+              await Share.share({ message: `${name}: "${post.text ?? ''}" — via BACKLOG NETWORK` });
+            }}
+            onGamePress={(game: any) => navigation.navigate('GameDetail', { gameId: game.id, game })}
+            onUserPress={(u: any) => navigation.navigate('UserProfile', { userId: u.id, username: u.username })}
+            onMore={(p: Post) => { setMenuPost(p); setMenuVisible(true); }}
+          />
         )}
         ListHeaderComponent={() => (
           <View>
             <StoriesRow />
-            <ComposerStrip user={user ?? { username: 'WP', displayName: 'Wilken P.' }}
+            <ComposerStrip
+              user={user}
               onPostPress={() => navigation.navigate('CreatePost')}
               onReviewPress={() => navigation.navigate('ReviewCreate')}
-              onStatusPress={() => navigation.navigate('CreatePost', { mode: 'status' })} />
+              onStatusPress={() => navigation.navigate('CreatePost', { mode: 'status' })}
+            />
             <View style={styles.tabsRow}>
               {(['friends', 'global', 'following'] as const).map(tab => (
                 <TouchableOpacity key={tab} style={[styles.tabBtn, activeTab === tab && styles.tabBtnActive]}
@@ -376,8 +488,9 @@ export default function FeedScreen() {
             </View>
           </View>
         )}
-        contentContainerStyle={styles.listContent} showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={handleRefresh} tintColor={Colors.accent} colors={[Colors.accent]} />}
+        contentContainerStyle={styles.listContent}
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={Colors.accent} colors={[Colors.accent]} />}
         ListEmptyComponent={() => <EmptyState emoji="📝" title="Nenhum post ainda" subtitle="Publique algo ou siga outros gamers!" action="Criar post" onAction={() => navigation.navigate('CreatePost')} />}
         ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
       />
@@ -385,28 +498,50 @@ export default function FeedScreen() {
       <PostMenuModal visible={menuVisible} onClose={() => setMenuVisible(false)} post={menuPost}
         isOwner={menuPost?.user?.id === String((user as any)?.id)}
         onDelete={handleDeletePost}
-        onEdit={() => Alert.alert('Em breve', 'Edição de posts em breve.')}
-        onReport={() => Alert.alert('Denúncia enviada', 'Obrigado por ajudar a manter a comunidade segura.')}
-        onCopyText={() => { if (menuPost?.text) Alert.alert('Texto copiado', menuPost.text.slice(0, 200)); }}
+        onReport={() => Alert.alert('Denúncia enviada', 'Obrigado!')}
+        onCopyText={() => { if (menuPost?.text) Alert.alert('Copiado', menuPost.text.slice(0, 200)); }}
       />
     </View>
   );
 }
 
-// ─── STYLES ───────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.bg },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: Spacing.lg, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: Colors.border },
   headerTitle: { fontFamily: Fonts.display, fontSize: 28, letterSpacing: 3, color: Colors.text },
   headerRight: { flexDirection: 'row', gap: 4 },
-  headerBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: Radius.md, position: 'relative' },
-  notifDot: { position: 'absolute', top: 8, right: 8, width: 8, height: 8, borderRadius: 4, backgroundColor: Colors.red, borderWidth: 2, borderColor: Colors.bg },
+  headerBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: Radius.md },
   listContent: { paddingHorizontal: Spacing.lg, paddingBottom: 100 },
-  storiesContainer: { paddingVertical: Spacing.md, gap: 14 },
-  storyItem: { alignItems: 'center', gap: 6 },
-  storyRing: { width: 62, height: 62, borderRadius: 18, padding: 2, alignItems: 'center', justifyContent: 'center' },
-  storyAvatarPlaceholder: { width: 58, height: 58, borderRadius: 16, backgroundColor: Colors.surface2, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: Colors.bg },
-  storyName: { fontFamily: Fonts.mono, fontSize: 10, color: Colors.muted, maxWidth: 60, textAlign: 'center' },
+
+  // Stories
+  storiesContainer: { paddingVertical: 12, paddingHorizontal: Spacing.lg, gap: 14 },
+  storyItem: { alignItems: 'center', gap: 5 },
+  storyRing: { width: 64, height: 64, borderRadius: 20, padding: 2, alignItems: 'center', justifyContent: 'center' },
+  storyImgWrapper: { width: 58, height: 58, borderRadius: 18, overflow: 'hidden', backgroundColor: Colors.surface, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: Colors.bg },
+  storyImg: { width: '100%', height: '100%' },
+  storyAddRing: { width: 64, height: 64, borderRadius: 20, backgroundColor: Colors.surface, borderWidth: 2, borderColor: Colors.border, alignItems: 'center', justifyContent: 'center' },
+  storyAddImg: { width: 60, height: 60, borderRadius: 18 },
+  storyAddPlus: { position: 'absolute', bottom: -4, right: -4, width: 20, height: 20, borderRadius: 10, backgroundColor: Colors.accent, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: Colors.bg },
+  storyName: { fontFamily: Fonts.mono, fontSize: 10, color: Colors.muted, maxWidth: 64, textAlign: 'center' },
+
+  // Story viewer
+  storyProgressRow: { flexDirection: 'row', gap: 4, paddingHorizontal: 12, position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10 },
+  storyProgressTrack: { flex: 1, height: 2, borderRadius: 1, backgroundColor: 'rgba(255,255,255,0.3)' },
+  storyProgressFill: { height: 2, borderRadius: 1, backgroundColor: '#fff' },
+  storyUserRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingTop: 56, paddingBottom: 12, position: 'absolute', top: 0, left: 0, right: 0, zIndex: 9 },
+  storyViewerName: { fontFamily: Fonts.bodyBold, fontSize: 13, color: '#fff' },
+  storyViewerTime: { fontFamily: Fonts.mono, fontSize: 10, color: 'rgba(255,255,255,0.7)' },
+  storyViewerViews: { fontFamily: Fonts.mono, fontSize: 10, color: 'rgba(255,255,255,0.7)' },
+  storyTouchSplit: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, flexDirection: 'row', zIndex: 1 },
+  storyBottom: { position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 10 },
+  storyReactionBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' },
+  storyReplyRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16 },
+  storyReplyInput: { flex: 1, backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 24, paddingHorizontal: 16, paddingVertical: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' },
+  storyReplyBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' },
+  storyExpiredBanner: { position: 'absolute', top: '50%', left: 0, right: 0, backgroundColor: 'rgba(0,0,0,0.6)', padding: 12, alignItems: 'center' },
+  storyExpiredText: { color: '#fff', fontFamily: Fonts.mono, fontSize: 12 },
+
+  // Composer
   composerWrapper: { backgroundColor: Colors.card, borderWidth: 1, borderColor: Colors.border, borderRadius: Radius.xl, marginBottom: 16, overflow: 'hidden' },
   composerMain: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 10 },
   composerInput: { flex: 1, backgroundColor: Colors.surface, borderRadius: Radius.md, paddingHorizontal: 12, paddingVertical: 10 },
@@ -415,11 +550,15 @@ const styles = StyleSheet.create({
   composerActionBtn: { flex: 1, paddingVertical: 10, alignItems: 'center', justifyContent: 'center' },
   composerActionText: { fontFamily: Fonts.monoBold, fontSize: 12, color: Colors.muted },
   composerDivider: { width: 1, backgroundColor: Colors.border },
+
+  // Tabs
   tabsRow: { flexDirection: 'row', gap: 6, marginBottom: 16 },
   tabBtn: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: Radius.full, backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border },
   tabBtnActive: { backgroundColor: Colors.accent, borderColor: Colors.accent },
-  tabText: { fontFamily: Fonts.monoBold, fontSize: 11, letterSpacing: 0.5, color: Colors.muted },
+  tabText: { fontFamily: Fonts.monoBold, fontSize: 11, color: Colors.muted },
   tabTextActive: { color: '#0a0a0f' },
+
+  // Post card
   card: { backgroundColor: Colors.card, borderWidth: 1, borderColor: Colors.border, borderRadius: Radius.xl, overflow: 'hidden', ...Shadows.card },
   cardHeader: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: Spacing.lg, paddingBottom: Spacing.md },
   cardHeaderInfo: { flex: 1 },
@@ -427,19 +566,21 @@ const styles = StyleSheet.create({
   cardTime: { fontFamily: Fonts.mono, fontSize: 10, color: Colors.muted, marginTop: 2 },
   moreBtn: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
   gameBlock: { flexDirection: 'row', backgroundColor: Colors.surface, marginHorizontal: Spacing.lg, marginBottom: Spacing.md, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.border, overflow: 'hidden' },
-  gameInfo: { flex: 1, padding: Spacing.md, justifyContent: 'space-between' },
-  gameTitle: { fontFamily: Fonts.bodyBold, fontSize: 14, color: Colors.text, lineHeight: 19, marginBottom: 3 },
-  gameDev: { fontFamily: Fonts.body, fontSize: 12, color: Colors.muted, marginBottom: 8 },
-  gameStat: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
+  gameInfo: { flex: 1, padding: Spacing.md },
+  gameTitle: { fontFamily: Fonts.bodyBold, fontSize: 14, color: Colors.text, marginBottom: 3 },
+  gameDev: { fontFamily: Fonts.body, fontSize: 12, color: Colors.muted, marginBottom: 4 },
   gameStatText: { fontFamily: Fonts.mono, fontSize: 11, color: Colors.muted },
-  platformRow: { flexDirection: 'row', gap: 5, flexWrap: 'wrap', marginTop: 6 },
-  platformBadge: { backgroundColor: Colors.surface2, borderRadius: Radius.xs, paddingHorizontal: 7, paddingVertical: 2, borderWidth: 1, borderColor: Colors.border },
-  platformText: { fontFamily: Fonts.monoBold, fontSize: 9, color: Colors.muted },
   cardText: { fontFamily: Fonts.body, fontSize: 14, lineHeight: 21, color: Colors.textSecondary, paddingHorizontal: Spacing.lg, paddingBottom: Spacing.md },
-  progressBlock: { paddingHorizontal: Spacing.lg, paddingBottom: Spacing.md },
   cardFooter: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: Spacing.md, paddingVertical: 10, borderTopWidth: 1, borderTopColor: Colors.border },
   actionBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 7, borderRadius: Radius.sm },
   actionIcon: { fontSize: 18, color: Colors.muted },
   actionCount: { fontFamily: Fonts.bodyMedium, fontSize: 13, color: Colors.muted },
-  bookmarkBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
+
+  // Post menu modal
+  menuOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
+  menuSheet: { backgroundColor: Colors.surface, borderTopLeftRadius: Radius.xxl, borderTopRightRadius: Radius.xxl, paddingBottom: 40, paddingTop: 12 },
+  menuHandle: { width: 36, height: 4, borderRadius: 2, backgroundColor: Colors.border, alignSelf: 'center', marginBottom: 16 },
+  menuItem: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: Spacing.lg, paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: Colors.border },
+  menuIcon: { fontSize: 20, width: 28, textAlign: 'center' },
+  menuLabel: { fontFamily: Fonts.bodyMedium, fontSize: 15, color: Colors.text },
 });

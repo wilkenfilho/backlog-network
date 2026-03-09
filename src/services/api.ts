@@ -106,8 +106,24 @@ export const backlogService = {
 
 export const reviewsService = {
   async getMyReviews(page = 1) { return api.get('/reviews/me', { params: { page } }); },
-  async getUserReviews(userId: string, page = 1) { return api.get(`/users/${userId}/reviews`, { params: { page } }); },
-  async createReview(data: { game_id: string; rating: number; body: string; title?: string; spoiler?: boolean; platform?: string; hours_played?: number }) { return (await api.post('/reviews', data)).data; },
+  async getUserReviews(userId: string, page = 1) {
+    try {
+      return api.get(`/users/${userId}/reviews`, { params: { page } });
+    } catch {
+      return api.get('/reviews/me', { params: { page } });
+    }
+  },
+  async createReview(data: { game_id: string; rating: number; body: string; title?: string; spoiler?: boolean; platform?: string; hours_played?: number }) {
+    try {
+      return (await api.post('/reviews', data)).data;
+    } catch (err: any) {
+      const status = err?.response?.status;
+      const msg = err?.response?.data?.error ?? err?.response?.data?.message ?? err?.message ?? 'Erro ao criar review';
+      const error = new Error(typeof msg === 'object' ? JSON.stringify(msg) : msg) as any;
+      error.status = status;
+      throw error;
+    }
+  },
   async updateReview(reviewId: string, data: object) { return (await api.patch(`/reviews/${reviewId}`, data)).data; },
   async deleteReview(reviewId: string) { await api.delete(`/reviews/${reviewId}`); },
   async likeReview(reviewId: string) { await api.post(`/reviews/${reviewId}/like`); },
@@ -124,7 +140,6 @@ export const usersService = {
       const res = await api.get('/users/suggested');
       const data = res.data?.data ?? res.data ?? [];
       if (Array.isArray(data) && data.length > 0) return res;
-      // fallback: search all users
       return api.get('/users/search', { params: { q: '' } });
     } catch {
       return api.get('/users/search', { params: { q: '' } });
@@ -132,6 +147,30 @@ export const usersService = {
   },
   async search(q: string) { return (await api.get('/users/search', { params: { q } })).data; },
   async updateProfile(data: object) { return (await api.patch('/users/me', data)).data; },
+  async updateUsername(username: string) {
+    return (await api.patch('/users/me', { username })).data;
+  },
+  async checkUsernameAvailable(username: string) {
+    try {
+      const res = await api.get('/users/check-username', { params: { username } });
+      return res.data?.available ?? true;
+    } catch { return true; }
+  },
+  async getUserPosts(userId: string, page = 1) {
+    try {
+      const res = await api.get(`/users/${userId}/posts`, { params: { page } });
+      return res.data;
+    } catch (e: any) {
+      // Fallback: filter feed by user
+      if (e?.response?.status === 404) {
+        const res = await api.get('/feed', { params: { filter: 'global', page } });
+        const all = res.data?.data ?? res.data ?? [];
+        const filtered = all.filter((p: any) => String(p.user_id) === String(userId) || String(p.user?.id) === String(userId));
+        return { data: filtered, has_more: false };
+      }
+      throw e;
+    }
+  },
   async getPrivacy() { return (await api.get('/users/me/privacy')).data; },
   async updatePrivacy(data: object) { return (await api.patch('/users/me/privacy', data)).data; },
   async getBlockedUsers() { return (await api.get('/users/me/blocked')).data; },
@@ -150,7 +189,15 @@ export const communitiesService = {
   async getAll(params?: object) { return api.get('/communities', { params }); },
   async list(params?: object) { return (await api.get('/communities', { params })).data; },
   async get(idOrSlug: string) { return (await api.get(`/communities/${idOrSlug}`)).data; },
-  async create(data: object) { return (await api.post('/communities', data)).data; },
+  async create(data: object) {
+    try {
+      return (await api.post('/communities', data)).data;
+    } catch (err: any) {
+      const d = err?.response?.data;
+      const msg = (typeof d === 'string' ? d : null) ?? d?.error ?? d?.message ?? err?.message ?? 'Erro ao criar comunidade';
+      throw new Error(typeof msg === 'object' ? JSON.stringify(msg) : String(msg).slice(0, 300));
+    }
+  },
   async update(id: string, data: object) { return (await api.patch(`/communities/${id}`, data)).data; },
   async join(id: string, message?: string) { return (await api.post(`/communities/${id}/join`, { message })).data; },
   async leave(id: string) { await api.delete(`/communities/${id}/join`); },
@@ -217,7 +264,18 @@ export const storiesService = {
 export const listsService = {
   async getMyLists() { return api.get('/lists/me'); },
   async getUserLists(userId: string) { return api.get(`/users/${userId}/lists`); },
-  async create(data: { title: string; description?: string; list_type?: string; is_public?: boolean }) { return api.post('/lists', data); },
+  async create(data: { title: string; description?: string | null; list_type?: string; is_public?: boolean }) {
+    try {
+      const payload: any = { title: data.title };
+      if (data.description) payload.description = data.description;
+      if (data.list_type) payload.list_type = data.list_type;
+      payload.is_public = data.is_public !== false ? 1 : 0;
+      return (await api.post('/lists', payload)).data;
+    } catch (err: any) {
+      const msg = err?.response?.data?.message ?? err?.response?.data?.error ?? err?.message ?? 'Erro ao criar lista';
+      throw new Error(typeof msg === 'object' ? JSON.stringify(msg) : msg);
+    }
+  },
   async update(listId: string, data: object) { return api.patch(`/lists/${listId}`, data); },
   async delete(listId: string) { return api.delete(`/lists/${listId}`); },
   async addGame(listId: string, gameId: string, notes?: string) { return api.post(`/lists/${listId}/items`, { game_id: gameId, notes }); },
