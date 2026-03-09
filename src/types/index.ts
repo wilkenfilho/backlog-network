@@ -214,6 +214,8 @@ export type RootStackParamList = {
   Community: { communityId: string; community?: any };
   Communities: undefined;
   CreateCommunity: undefined;
+  CommunitySettings: { communityId: string; community?: any };
+  TopicCreate: { communityId: string };
   TopicDetail: { topicId: string };
   Messages: { userId?: string };
   Followers: { userId: string };

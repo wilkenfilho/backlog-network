@@ -31,6 +31,7 @@ import GameDetailScreen from '../screens/game/GameDetailScreen';
 import CommunityScreen from '../screens/community/CommunityScreen';
 import CommunitiesScreen from '../screens/community/CommunitiesScreen';
 import CreateCommunityScreen from '../screens/community/CreateCommunityScreen';
+import CommunitySettingsScreen from '../screens/community/CommunitySettingsScreen';
 import TopicDetailScreen from '../screens/community/TopicDetailScreen';
 import { MessagesScreen } from '../screens/social/MessagesScreen';
 import CommentsScreen from '../screens/main/CommentsScreen';
@@ -179,6 +180,7 @@ export default function RootNavigator() {
             <RootStack.Screen name="Community" component={CommunityScreen} options={{ animation: 'slide_from_right' }} />
             <RootStack.Screen name="Communities" component={CommunitiesScreen} options={{ animation: 'slide_from_right' }} />
             <RootStack.Screen name="CreateCommunity" component={CreateCommunityScreen} options={{ presentation: 'modal', animation: 'slide_from_bottom' }} />
+            <RootStack.Screen name="CommunitySettings" component={CommunitySettingsScreen} options={{ presentation: 'modal', animation: 'slide_from_bottom' }} />
             <RootStack.Screen name="TopicDetail" component={TopicDetailScreen} options={{ animation: 'slide_from_right' }} />
             <RootStack.Screen name="Messages" component={MessagesScreen} options={{ animation: 'slide_from_right' }} />
             <RootStack.Screen name="Comments" component={CommentsScreen} options={{ animation: 'slide_from_bottom' }} />

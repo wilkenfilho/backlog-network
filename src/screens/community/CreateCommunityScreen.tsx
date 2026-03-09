@@ -115,11 +115,34 @@ export default function CreateCommunityScreen() {
   });
 
   const createMutation = useMutation({
-    mutationFn: (data: any) => communitiesService.create(data),
+    mutationFn: async (data: any) => {
+      // If a RAWG game is linked, resolve/create it locally first (Option A)
+      if (data._rawg_id) {
+        try {
+          const localGame = await gamesService.getOrCreate(data._rawg_id, data._game_title);
+          if (localGame?.id) {
+            data.game_id = localGame.id;
+          }
+        } catch {
+          // If resolution fails, proceed without game_id to avoid FK error
+          delete data.game_id;
+        }
+        delete data._rawg_id;
+        delete data._game_title;
+      }
+      return communitiesService.create(data);
+    },
     onSuccess: (res: any) => {
       queryClient.invalidateQueries({ queryKey: ['communities'] });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      navigation.goBack();
+      // Navigate to the newly created community instead of just going back
+      const community = res?.community ?? res?.data ?? res;
+      const communityId = community?.id ?? community?.slug;
+      if (communityId) {
+        navigation.replace('Community', { communityId, community });
+      } else {
+        navigation.goBack();
+      }
     },
     onError: (error: any) => {
       const detail = error?.message ?? 'Não foi possível criar a comunidade.';
@@ -159,8 +182,9 @@ export default function CreateCommunityScreen() {
     if (coverUrl) payload.cover_url = coverUrl;
 
     if (linkedGame) {
-      payload.game_id = linkedGame.rawg_id ?? linkedGame.id;
-      payload.game_title = linkedGame.title;
+      // Store rawg_id for resolution in mutationFn; don't send raw RAWG id as game_id
+      payload._rawg_id = linkedGame.rawg_id ?? linkedGame.id;
+      payload._game_title = linkedGame.title;
     }
 
     createMutation.mutate(payload);

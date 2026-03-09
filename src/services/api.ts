@@ -96,6 +96,18 @@ export const gamesService = {
   async getSteamTop() { return api.get('/games/steam-top'); },
   async getGame(gameId: string) { return (await api.get(`/games/${gameId}`)).data; },
   async getReviews(gameId: string, page = 1) { return (await api.get(`/games/${gameId}/reviews`, { params: { page } })).data; },
+  /** Ensures a game exists locally by rawg_id; creates it if needed. Returns the local game object with its UUID. */
+  async getOrCreate(rawgId: string | number, title?: string) {
+    try {
+      // Most backends expose this as GET /games/by-rawg/:id or POST /games/sync
+      const res = await api.post('/games/sync', { rawg_id: rawgId, title }).catch(async () =>
+        api.get(`/games/by-rawg/${rawgId}`)
+      );
+      return (res as any)?.data?.game ?? (res as any)?.data ?? null;
+    } catch {
+      return null;
+    }
+  },
 };
 
 export const backlogService = {
@@ -219,6 +231,12 @@ export const communitiesService = {
   async getRequests(id: string) { return (await api.get(`/communities/${id}/requests`)).data; },
   async getReports(id: string) { return (await api.get(`/communities/${id}/reports`)).data; },
   async getLogs(id: string, page = 1) { return (await api.get(`/communities/${id}/logs`, { params: { page } })).data; },
+  async addModerator(id: string, userId: string) { return (await api.post(`/communities/${id}/moderators`, { user_id: userId })).data; },
+  async removeModerator(id: string, userId: string) { return (await api.delete(`/communities/${id}/moderators/${userId}`)).data; },
+  async removeMember(id: string, userId: string, reason?: string) { return (await api.delete(`/communities/${id}/members/${userId}`, { data: { reason } })).data; },
+  async transferOwnership(id: string, newOwnerId: string) { return (await api.post(`/communities/${id}/transfer`, { new_owner_id: newOwnerId })).data; },
+  async reportContent(id: string, contentType: string, contentId: string, reason: string) { return (await api.post(`/communities/${id}/reports`, { content_type: contentType, content_id: contentId, reason })).data; },
+  async delete(id: string) { await api.delete(`/communities/${id}`); },
 };
 
 export const topicsService = {
