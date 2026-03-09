@@ -53,6 +53,85 @@ function SettingsModal({ visible, onClose, title, children }: {
   );
 }
 
+// ─── CHANGE USERNAME MODAL ────────────────────────────────────────────────────
+function ChangeUsernameModal({ visible, onClose, currentUsername }: { visible: boolean; onClose: () => void; currentUsername: string }) {
+  const [newUsername, setNewUsername] = useState('');
+  const [checking, setChecking] = useState(false);
+  const [available, setAvailable] = useState<boolean | null>(null);
+  const { updateUser } = useAuthStore();
+  const queryClient = useQueryClient();
+
+  const checkAvailability = async (val: string) => {
+    if (val.length < 3 || val === currentUsername) { setAvailable(null); return; }
+    setChecking(true);
+    try {
+      const isAvail = await usersService.checkUsernameAvailable(val);
+      setAvailable(isAvail);
+    } catch { setAvailable(null); }
+    finally { setChecking(false); }
+  };
+
+  React.useEffect(() => {
+    const t = setTimeout(() => checkAvailability(newUsername), 600);
+    return () => clearTimeout(t);
+  }, [newUsername]);
+
+  const mutation = useMutation({
+    mutationFn: () => usersService.updateUsername(newUsername.trim().toLowerCase()),
+    onSuccess: (data: any) => {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      updateUser({ username: newUsername.trim().toLowerCase() });
+      queryClient.invalidateQueries({ queryKey: ['profile'] });
+      Alert.alert('Handle atualizado!', `Seu novo handle é @${newUsername.trim().toLowerCase()}`);
+      setNewUsername('');
+      setAvailable(null);
+      onClose();
+    },
+    onError: (e: any) => {
+      const msg = e?.response?.data?.message ?? e?.response?.data?.error ?? e?.message ?? 'Não foi possível atualizar o handle.';
+      Alert.alert('Erro', typeof msg === 'object' ? JSON.stringify(msg) : msg);
+    },
+  });
+
+  const handleSubmit = () => {
+    const val = newUsername.trim().toLowerCase();
+    if (val.length < 3) { Alert.alert('Handle inválido', 'Mínimo 3 caracteres.'); return; }
+    if (!/^[a-z0-9._]+$/.test(val)) { Alert.alert('Caracteres inválidos', 'Use apenas letras, números, pontos e underscore.'); return; }
+    if (available === false) { Alert.alert('Indisponível', 'Este handle já está em uso.'); return; }
+    mutation.mutate();
+  };
+
+  const borderColor = available === true ? Colors.teal : available === false ? Colors.red : Colors.border;
+  const hint = checking ? '⏳ Verificando...' : available === true ? '✅ Disponível!' : available === false ? '❌ Já em uso' : 'Use letras, números, pontos e _';
+
+  return (
+    <SettingsModal visible={visible} onClose={onClose} title="Alterar handle @">
+      <Text style={ss.modalLabel}>Handle atual: @{currentUsername}</Text>
+      <View style={[ss.modalInput, { borderColor, flexDirection: 'row', alignItems: 'center', paddingVertical: 0 }]}>
+        <Text style={{ color: Colors.muted, fontFamily: Fonts.mono, fontSize: 15, paddingVertical: 14 }}>@</Text>
+        <TextInput
+          style={{ flex: 1, color: Colors.text, fontFamily: Fonts.mono, fontSize: 15, paddingVertical: 14 }}
+          value={newUsername}
+          onChangeText={v => { setNewUsername(v.toLowerCase()); setAvailable(null); }}
+          placeholder="novo_handle"
+          placeholderTextColor={Colors.muted}
+          autoCapitalize="none"
+          autoCorrect={false}
+          maxLength={30}
+        />
+      </View>
+      <Text style={[ss.modalLabel, { color: available === true ? Colors.teal : available === false ? Colors.red : Colors.muted, marginTop: -4, marginBottom: 16 }]}>{hint}</Text>
+      <TouchableOpacity
+        style={[ss.modalBtn, (mutation.isPending || !newUsername.trim() || available === false) && { opacity: 0.4 }]}
+        onPress={handleSubmit}
+        disabled={mutation.isPending || !newUsername.trim() || available === false}
+      >
+        <Text style={ss.modalBtnText}>{mutation.isPending ? 'Salvando...' : 'Salvar handle'}</Text>
+      </TouchableOpacity>
+    </SettingsModal>
+  );
+}
+
 // ─── CHANGE EMAIL MODAL ───────────────────────────────────────────────────────
 function ChangeEmailModal({ visible, onClose, currentEmail }: { visible: boolean; onClose: () => void; currentEmail: string }) {
   const [newEmail, setNewEmail] = useState('');
@@ -241,6 +320,7 @@ export default function SettingsScreen() {
   // Modals
   const [emailModal, setEmailModal] = useState(false);
   const [passModal, setPassModal] = useState(false);
+  const [usernameModal, setUsernameModal] = useState(false);
   const [tfaModal, setTfaModal] = useState(false);
   const [profilePublicModal, setProfilePublicModal] = useState(false);
   const [backlogVisModal, setBacklogVisModal] = useState(false);
@@ -315,6 +395,7 @@ export default function SettingsScreen() {
 
         <Section title="CONTA">
           <Row icon="✉️" label="Email" value={(user as any)?.email ?? '—'} onPress={() => setEmailModal(true)} />
+          <Row icon="🔤" label="Handle @" value={`@${(user as any)?.username ?? '—'}`} onPress={() => setUsernameModal(true)} />
           <Row icon="🔐" label="Alterar senha" onPress={() => setPassModal(true)} />
           <Row icon="📱" label="Autenticação de dois fatores" value={tfaEnabled ? 'Ativado' : 'Desativado'} onPress={() => setTfaModal(true)} />
         </Section>
@@ -349,6 +430,7 @@ export default function SettingsScreen() {
       {/* Modals */}
       <ChangeEmailModal visible={emailModal} onClose={() => setEmailModal(false)} currentEmail={(user as any)?.email ?? ''} />
       <ChangePasswordModal visible={passModal} onClose={() => setPassModal(false)} />
+      <ChangeUsernameModal visible={usernameModal} onClose={() => setUsernameModal(false)} currentUsername={(user as any)?.username ?? ''} />
       <TwoFactorModal visible={tfaModal} onClose={() => setTfaModal(false)} enabled={tfaEnabled} />
       <BlockedUsersModal visible={blockedModal} onClose={() => setBlockedModal(false)} />
 

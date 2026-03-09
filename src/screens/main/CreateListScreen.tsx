@@ -35,7 +35,7 @@ export default function CreateListScreen() {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       navigation.goBack();
     },
-    onError: () => Alert.alert('Erro', 'Não foi possível criar a lista.'),
+    onError: (e: any) => Alert.alert('Erro ao criar lista', e?.message ?? 'Não foi possível criar a lista.'),
   });
 
   const handleSubmit = () => {

@@ -59,7 +59,14 @@ export default function ReviewCreateScreen({ route }: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       navigation.goBack();
     },
-    onError: (e: any) => Alert.alert('Erro', e?.message ?? 'Não foi possível publicar a review.'),
+    onError: (e: any) => {
+      const status = (e as any)?.response?.status;
+      if (status === 409) {
+        Alert.alert('Review duplicada', 'Você já escreveu uma review para este jogo. Edite a existente ou escolha outro jogo.');
+      } else {
+        Alert.alert('Erro', e?.message ?? 'Não foi possível publicar a review.');
+      }
+    },
   });
 
   const handleSubmit = () => {
