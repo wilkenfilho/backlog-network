@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  TextInput, RefreshControl, FlatList,
+  TextInput, RefreshControl, FlatList, ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -18,96 +18,130 @@ type Tab = 'games' | 'twitch' | 'steam' | 'communities' | 'users';
 
 const GENRES = ['RPG', 'Action', 'Indie', 'Roguelike', 'Platformer', 'Soulsborne', 'Strategy', 'Horror', 'Metroidvania', 'Puzzle'];
 
+// ─── DEBOUNCE HOOK ────────────────────────────────────────────────────────────
+function useDebounce(value: string, delay: number) {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(timer);
+  }, [value, delay]);
+  return debounced;
+}
+
+// ─── GAME CARD ────────────────────────────────────────────────────────────────
 function GameCard({ game, onPress }: { game: any; onPress: () => void }) {
-  const cover = game.coverUrl ?? game.cover_url;
+  const cover = game.cover_url ?? game.coverUrl;
   return (
     <TouchableOpacity style={styles.gameCard} onPress={onPress} activeOpacity={0.85}>
       {cover
         ? <Image source={{ uri: cover }} style={styles.gameCover} contentFit="cover" transition={300} />
-        : <LinearGradient colors={['#1a1628', '#0d0d14']} style={styles.gameCover}><Text style={{ fontSize: 28 }}>🎮</Text></LinearGradient>
+        : <LinearGradient colors={['#1a1628', '#0d0d14']} style={[styles.gameCover, { alignItems: 'center', justifyContent: 'center' }]}><Text style={{ fontSize: 28 }}>🎮</Text></LinearGradient>
       }
       <View style={styles.gameCardInfo}>
         <Text style={styles.gameCardTitle} numberOfLines={2}>{game.title ?? game.name}</Text>
-        <Text style={styles.gameCardDev} numberOfLines={1}>{game.developer}</Text>
-        {(game.rawg_rating || game.rating) > 0 && (
+        <Text style={styles.gameCardDev} numberOfLines={1}>{game.developer ?? ''}</Text>
+        {Number(game.rawg_rating ?? game.rating ?? 0) > 0 && (
           <Text style={styles.gameRating}>⭐ {Number(game.rawg_rating ?? game.rating ?? 0).toFixed(1)}</Text>
+        )}
+        {game.genres && game.genres.length > 0 && (
+          <View style={styles.genreTagsRow}>
+            {game.genres.slice(0, 2).map((g: any, i: number) => (
+              <View key={i} style={styles.genreTag}>
+                <Text style={styles.genreTagText}>{typeof g === 'string' ? g : g.name}</Text>
+              </View>
+            ))}
+          </View>
         )}
       </View>
     </TouchableOpacity>
   );
 }
 
+// ─── STEAM GAME CARD ──────────────────────────────────────────────────────────
 function SteamGameCard({ game }: { game: any }) {
-  const cover = game.cover_url ?? `https://cdn.akamai.steamstatic.com/steam/apps/${game.steam_appid}/header.jpg`;
+  const cover = game.cover_url ?? `https://cdn.akamai.steamstatic.com/steam/apps/${game.steam_id}/header.jpg`;
   return (
     <View style={styles.steamCard}>
       <Image source={{ uri: cover }} style={styles.steamCover} contentFit="cover" transition={300} />
       <LinearGradient colors={['transparent', 'rgba(10,10,15,0.95)']} style={styles.steamGradient} />
       <View style={styles.steamInfo}>
         <Text style={styles.steamTitle} numberOfLines={2}>{game.title ?? game.name}</Text>
-        {game.discount_percent > 0 && (
-          <View style={styles.discountBadge}>
-            <Text style={styles.discountText}>-{game.discount_percent}%</Text>
-          </View>
+        {game.current_players > 0 && (
+          <Text style={styles.steamPlayers}>👥 {Number(game.current_players).toLocaleString()} jogando</Text>
         )}
-        {game.final_price && (
-          <Text style={styles.steamPrice}>R$ {(game.final_price / 100).toFixed(2)}</Text>
-        )}
-        {game.concurrent_players > 0 && (
-          <Text style={styles.steamPlayers}>👥 {game.concurrent_players.toLocaleString()} jogando</Text>
-        )}
+        {game.price && <Text style={styles.steamPrice}>{game.price}</Text>}
       </View>
     </View>
   );
 }
 
+// ─── EXPLORE SCREEN ───────────────────────────────────────────────────────────
 export default function ExploreScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<any>();
   const [activeTab, setActiveTab] = useState<Tab>('games');
   const [search, setSearch] = useState('');
   const [activeGenre, setActiveGenre] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState('');
+
+  // Proper debounce — clears timer automatically
+  const debouncedSearch = useDebounce(search, 400);
 
   // ─── QUERIES ──────────────────────────────────────────────────────────────
   const { data: trendingGames, isLoading: trendingLoading, refetch: refetchTrending } = useQuery({
     queryKey: ['games-trending'],
     queryFn: () => gamesService.getTrending(),
-    select: (res: any) => res.data?.data ?? res.data ?? [],
+    select: (res: any) => {
+      const raw = res.data?.data ?? res.data ?? res ?? [];
+      return Array.isArray(raw) ? raw : [];
+    },
     enabled: activeTab === 'games',
   });
 
-  const { data: searchResults, isLoading: searchLoading } = useQuery({
-    queryKey: ['games-search', searchQuery],
-    queryFn: () => gamesService.search(searchQuery),
-    select: (res: any) => res.data?.data ?? res.data ?? [],
-    enabled: searchQuery.length >= 2 && activeTab === 'games',
+  const { data: searchResults, isLoading: searchLoading, isFetching: searchFetching } = useQuery({
+    queryKey: ['games-search', debouncedSearch],
+    queryFn: () => gamesService.search(debouncedSearch),
+    select: (res: any) => {
+      const raw = res.data?.data ?? res.data ?? res ?? [];
+      return Array.isArray(raw) ? raw : [];
+    },
+    enabled: debouncedSearch.length >= 2 && activeTab === 'games',
   });
 
   const { data: steamData, refetch: refetchSteam } = useQuery({
     queryKey: ['steam-top'],
     queryFn: () => gamesService.getSteamTop(),
-    select: (res: any) => res.data?.data ?? res.data ?? [],
+    select: (res: any) => {
+      const raw = res.data?.data ?? res.data ?? res ?? [];
+      return Array.isArray(raw) ? raw : [];
+    },
     enabled: activeTab === 'steam',
   });
 
   const { data: communitiesData, refetch: refetchCommunities } = useQuery({
     queryKey: ['communities'],
     queryFn: () => communitiesService.getAll(),
-    select: (res: any) => res.data?.data ?? [],
+    select: (res: any) => {
+      const raw = res.data?.data ?? res.data ?? res ?? [];
+      return Array.isArray(raw) ? raw : [];
+    },
     enabled: activeTab === 'communities',
   });
 
-  const { data: usersData } = useQuery({
+  const { data: usersData, isLoading: usersLoading } = useQuery({
     queryKey: ['users-suggested'],
     queryFn: () => usersService.getSuggested(),
-    select: (res: any) => res.data?.data ?? res.data ?? [],
+    select: (res: any) => {
+      const raw = res.data?.data ?? res.data ?? res ?? [];
+      return Array.isArray(raw) ? raw : [];
+    },
     enabled: activeTab === 'users',
   });
 
-  const games = (searchQuery.length >= 2 ? searchResults : trendingGames) ?? [];
+  // Use search results when searching, trending otherwise
+  const isSearching = debouncedSearch.length >= 2;
+  const games = (isSearching ? searchResults : trendingGames) ?? [];
   const filteredGames = activeGenre
-    ? games.filter((g: any) => g.genres?.some((genre: any) => (typeof genre === 'string' ? genre : genre.name) === activeGenre))
+    ? games.filter((g: any) => g.genres?.some((genre: any) => (typeof genre === 'string' ? genre : genre?.name) === activeGenre))
     : games;
 
   const TABS: { key: Tab; label: string }[] = [
@@ -118,6 +152,14 @@ export default function ExploreScreen() {
     { key: 'users',       label: 'Usuários' },
   ];
 
+  const placeholders: Record<Tab, string> = {
+    games: 'Buscar jogo...',
+    twitch: 'Buscar no Twitch...',
+    steam: 'Buscar na Steam...',
+    communities: 'Buscar comunidade...',
+    users: 'Buscar usuário...',
+  };
+
   const handleRefresh = async () => {
     if (activeTab === 'games') await refetchTrending();
     if (activeTab === 'steam') await refetchSteam();
@@ -126,47 +168,37 @@ export default function ExploreScreen() {
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
-      {/* Header + Search */}
+      {/* Header */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>EXPLORAR</Text>
       </View>
 
+      {/* Search */}
       <View style={styles.searchRow}>
         <Text style={{ color: Colors.muted, fontSize: 16 }}>🔍</Text>
         <TextInput
           style={styles.searchInput}
           value={search}
-          onChangeText={(t) => {
-            setSearch(t);
-            if (t.length >= 2) {
-              setTimeout(() => setSearchQuery(t), 500);
-            } else {
-              setSearchQuery('');
-            }
-          }}
-          placeholder={activeTab === 'games' ? 'Buscar jogo...' : activeTab === 'communities' ? 'Buscar comunidade...' : 'Buscar usuário...'}
+          onChangeText={setSearch}
+          placeholder={placeholders[activeTab]}
           placeholderTextColor={Colors.muted}
+          autoCorrect={false}
         />
         {search.length > 0 && (
-          <TouchableOpacity onPress={() => { setSearch(''); setSearchQuery(''); }}>
+          <TouchableOpacity onPress={() => setSearch('')}>
             <Text style={{ color: Colors.muted }}>✕</Text>
           </TouchableOpacity>
+        )}
+        {(searchFetching && isSearching) && (
+          <ActivityIndicator color={Colors.accent} size="small" />
         )}
       </View>
 
       {/* Tabs */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={styles.tabsRow}
-        contentContainerStyle={{ paddingHorizontal: Spacing.lg, gap: 8 }}
-      >
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tabsRow} contentContainerStyle={{ paddingHorizontal: Spacing.lg, gap: 8 }}>
         {TABS.map(t => (
-          <TouchableOpacity
-            key={t.key}
-            style={[styles.tab, activeTab === t.key && styles.tabActive]}
-            onPress={() => { Haptics.selectionAsync(); setActiveTab(t.key); }}
-          >
+          <TouchableOpacity key={t.key} style={[styles.tab, activeTab === t.key && styles.tabActive]}
+            onPress={() => { Haptics.selectionAsync(); setActiveTab(t.key); setSearch(''); setActiveGenre(null); }}>
             <Text style={[styles.tabText, activeTab === t.key && styles.tabTextActive]}>{t.label}</Text>
           </TouchableOpacity>
         ))}
@@ -174,46 +206,53 @@ export default function ExploreScreen() {
 
       {/* GAMES TAB */}
       {activeTab === 'games' && (
-        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}
+          refreshControl={<RefreshControl refreshing={false} onRefresh={handleRefresh} tintColor={Colors.accent} />}>
+          {/* Genre filters */}
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, marginBottom: Spacing.md }}>
-            <TouchableOpacity
-              style={[styles.genreBtn, !activeGenre && styles.genreBtnActive]}
-              onPress={() => { Haptics.selectionAsync(); setActiveGenre(null); }}
-            >
+            <TouchableOpacity style={[styles.genreBtn, !activeGenre && styles.genreBtnActive]}
+              onPress={() => { Haptics.selectionAsync(); setActiveGenre(null); }}>
               <Text style={[styles.genreBtnText, !activeGenre && styles.genreBtnTextActive]}>Todos</Text>
             </TouchableOpacity>
             {GENRES.map(g => (
-              <TouchableOpacity
-                key={g}
-                style={[styles.genreBtn, activeGenre === g && styles.genreBtnActive]}
-                onPress={() => { Haptics.selectionAsync(); setActiveGenre(activeGenre === g ? null : g); }}
-              >
+              <TouchableOpacity key={g} style={[styles.genreBtn, activeGenre === g && styles.genreBtnActive]}
+                onPress={() => { Haptics.selectionAsync(); setActiveGenre(activeGenre === g ? null : g); }}>
                 <Text style={[styles.genreBtnText, activeGenre === g && styles.genreBtnTextActive]}>{g}</Text>
               </TouchableOpacity>
             ))}
           </ScrollView>
 
-          {trendingLoading && !filteredGames.length
-            ? <Text style={styles.loadingText}>Carregando...</Text>
-            : (
-              <View style={styles.gamesGrid}>
-                {filteredGames.map((game: any) => (
-                  <GameCard
-                    key={game.id}
-                    game={game}
-                    onPress={() => navigation.navigate('GameDetail', { gameId: game.id, game })}
-                  />
-                ))}
-              </View>
-            )
-          }
-          {!trendingLoading && filteredGames.length === 0 && (
-            <EmptyState emoji="🎮" title="Nenhum jogo encontrado" subtitle="Tente buscar por outro termo." />
+          {/* Search status */}
+          {isSearching && searchLoading && (
+            <View style={{ padding: 40, alignItems: 'center' }}>
+              <ActivityIndicator color={Colors.accent} size="large" />
+              <Text style={[styles.loadingText, { marginTop: 12 }]}>Buscando "{debouncedSearch}"...</Text>
+            </View>
+          )}
+
+          {/* Games grid */}
+          {(!isSearching && trendingLoading && !filteredGames.length) ? (
+            <View style={{ padding: 40, alignItems: 'center' }}>
+              <ActivityIndicator color={Colors.accent} size="large" />
+              <Text style={[styles.loadingText, { marginTop: 12 }]}>Carregando trending...</Text>
+            </View>
+          ) : filteredGames.length > 0 ? (
+            <View style={styles.gamesGrid}>
+              {filteredGames.map((game: any, i: number) => (
+                <GameCard key={game.id ?? i} game={game}
+                  onPress={() => navigation.navigate('GameDetail', { gameId: game.id, game: {
+                    ...game, title: game.title ?? game.name, coverUrl: game.cover_url ?? game.coverUrl,
+                  }})} />
+              ))}
+            </View>
+          ) : (
+            <EmptyState emoji="🎮" title="Nenhum jogo encontrado"
+              subtitle={isSearching ? `Sem resultados para "${debouncedSearch}"` : 'Tente buscar por outro termo.'} />
           )}
         </ScrollView>
       )}
 
-      {/* TWITCH TAB — WebView do seu site */}
+      {/* TWITCH TAB */}
       {activeTab === 'twitch' && (
         <View style={{ flex: 1 }}>
           <WebView
@@ -222,7 +261,8 @@ export default function ExploreScreen() {
             startInLoadingState
             renderLoading={() => (
               <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.bg }}>
-                <Text style={{ color: Colors.accent, fontFamily: Fonts.display, fontSize: 20 }}>Carregando Twitch...</Text>
+                <ActivityIndicator color={Colors.accent} size="large" />
+                <Text style={[styles.loadingText, { marginTop: 12 }]}>Carregando Twitch...</Text>
               </View>
             )}
           />
@@ -233,7 +273,7 @@ export default function ExploreScreen() {
       {activeTab === 'steam' && (
         <FlatList
           data={steamData ?? []}
-          keyExtractor={(item: any, i) => item.steam_appid ?? i.toString()}
+          keyExtractor={(item: any, i) => String(item.steam_id ?? i)}
           renderItem={({ item }) => <SteamGameCard game={item} />}
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
@@ -247,12 +287,12 @@ export default function ExploreScreen() {
       {activeTab === 'communities' && (
         <FlatList
           data={communitiesData ?? []}
-          keyExtractor={(item: any) => item.id}
+          keyExtractor={(item: any) => String(item.id)}
           renderItem={({ item }) => (
             <TouchableOpacity style={styles.communityCard} onPress={() => navigation.navigate('Community', { communityId: item.id })} activeOpacity={0.85}>
               <View style={styles.communityIcon}>
                 <LinearGradient colors={[Colors.purple + '40', Colors.bg]} style={StyleSheet.absoluteFill} />
-                <Text style={{ fontSize: 26 }}>{item.icon_url ?? '🎮'}</Text>
+                <Text style={{ fontSize: 26 }}>{item.icon_url ?? item.icon ?? '🎮'}</Text>
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.communityName}>{item.name}</Text>
@@ -283,7 +323,7 @@ export default function ExploreScreen() {
       {activeTab === 'users' && (
         <FlatList
           data={usersData ?? []}
-          keyExtractor={(item: any) => item.id}
+          keyExtractor={(item: any) => String(item.id)}
           renderItem={({ item }) => (
             <TouchableOpacity style={styles.userCard} onPress={() => navigation.navigate('UserProfile', { userId: item.id })} activeOpacity={0.85}>
               <View style={styles.userAvatar}>
@@ -295,14 +335,16 @@ export default function ExploreScreen() {
                 <Text style={styles.userName}>{item.display_name ?? item.username}</Text>
                 <Text style={styles.userHandle}>@{item.username} · Nível {item.level ?? 1}</Text>
               </View>
-              <View style={styles.followBtn}>
-                <Text style={styles.followBtnText}>+ Seguir</Text>
-              </View>
+              <View style={styles.followBtn}><Text style={styles.followBtnText}>+ Seguir</Text></View>
             </TouchableOpacity>
           )}
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
-          ListEmptyComponent={() => <EmptyState emoji="👥" title="Sem sugestões" subtitle="Explore mais para encontrar pessoas!" />}
+          ListEmptyComponent={() => (
+            usersLoading
+              ? <View style={{ padding: 40, alignItems: 'center' }}><ActivityIndicator color={Colors.accent} size="large" /></View>
+              : <EmptyState emoji="👥" title="Sem sugestões" subtitle="Explore mais para encontrar pessoas!" />
+          )}
         />
       )}
     </View>
@@ -321,25 +363,26 @@ const styles = StyleSheet.create({
   tabText: { fontFamily: Fonts.monoBold, fontSize: 12, color: Colors.muted },
   tabTextActive: { color: Colors.accent },
   scrollContent: { paddingHorizontal: Spacing.lg, paddingBottom: 100 },
-  loadingText: { fontFamily: Fonts.mono, fontSize: 13, color: Colors.muted, textAlign: 'center', padding: 40 },
+  loadingText: { fontFamily: Fonts.mono, fontSize: 13, color: Colors.muted, textAlign: 'center' },
   genreBtn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: Radius.full, backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border },
   genreBtnActive: { borderColor: Colors.accent, backgroundColor: Colors.accent + '15' },
   genreBtnText: { fontFamily: Fonts.mono, fontSize: 12, color: Colors.muted },
   genreBtnTextActive: { color: Colors.accent },
   gamesGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
-  gameCard: { width: '47%', backgroundColor: Colors.card, borderRadius: Radius.xl, borderWidth: 1, borderColor: Colors.border, overflow: 'hidden', ...Shadows.card },
-  gameCover: { width: '100%', aspectRatio: 3/4, alignItems: 'center', justifyContent: 'center' },
+  gameCard: { width: '47%' as any, backgroundColor: Colors.card, borderRadius: Radius.xl, borderWidth: 1, borderColor: Colors.border, overflow: 'hidden', ...Shadows.card },
+  gameCover: { width: '100%' as any, aspectRatio: 3 / 4 },
   gameCardInfo: { padding: Spacing.sm },
   gameCardTitle: { fontFamily: Fonts.bodyBold, fontSize: 13, color: Colors.text, lineHeight: 18, marginBottom: 2 },
   gameCardDev: { fontFamily: Fonts.mono, fontSize: 10, color: Colors.muted },
   gameRating: { fontFamily: Fonts.monoBold, fontSize: 11, color: Colors.amber, marginTop: 4 },
+  genreTagsRow: { flexDirection: 'row', gap: 4, marginTop: 4, flexWrap: 'wrap' },
+  genreTag: { backgroundColor: Colors.surface2, borderRadius: Radius.xs, paddingHorizontal: 6, paddingVertical: 1 },
+  genreTagText: { fontFamily: Fonts.mono, fontSize: 9, color: Colors.muted },
   steamCard: { borderRadius: Radius.xl, overflow: 'hidden', height: 180, position: 'relative', ...Shadows.card },
-  steamCover: { width: '100%', height: '100%' },
-  steamGradient: { position: 'absolute', bottom: 0, left: 0, right: 0, height: '60%' },
+  steamCover: { width: '100%' as any, height: '100%' as any },
+  steamGradient: { position: 'absolute', bottom: 0, left: 0, right: 0, height: '60%' as any },
   steamInfo: { position: 'absolute', bottom: 0, left: 0, right: 0, padding: Spacing.md },
   steamTitle: { fontFamily: Fonts.bodyBold, fontSize: 14, color: Colors.text, marginBottom: 4 },
-  discountBadge: { backgroundColor: Colors.teal, borderRadius: Radius.xs, paddingHorizontal: 8, paddingVertical: 3, alignSelf: 'flex-start', marginBottom: 4 },
-  discountText: { fontFamily: Fonts.monoBold, fontSize: 12, color: '#fff' },
   steamPrice: { fontFamily: Fonts.monoBold, fontSize: 13, color: Colors.accent },
   steamPlayers: { fontFamily: Fonts.mono, fontSize: 11, color: Colors.muted, marginTop: 2 },
   communityCard: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: Colors.card, borderRadius: Radius.xl, borderWidth: 1, borderColor: Colors.border, padding: Spacing.md, marginBottom: 10, ...Shadows.card },
