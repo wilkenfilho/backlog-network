@@ -58,11 +58,13 @@ export default function CreateCommunityScreen() {
       navigation.goBack();
     },
     onError: (error: any) => {
-      // Show actual API error instead of generic message
-      const msg = error?.response?.data?.error
+      const serverMsg = error?.response?.data?.message
+        ?? error?.response?.data?.error
+        ?? error?.response?.data
         ?? error?.message
         ?? 'Não foi possível criar a comunidade.';
-      Alert.alert('Erro ao criar comunidade', msg);
+      const detail = typeof serverMsg === 'object' ? JSON.stringify(serverMsg) : String(serverMsg);
+      Alert.alert('Erro ao criar comunidade', detail);
     },
   });
 
@@ -80,23 +82,22 @@ export default function CreateCommunityScreen() {
       .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
       .replace(/[^a-z0-9\s-]/g, '')
       .trim().replace(/\s+/g, '-')
-      .replace(/-+/g, '-');
+      .replace(/-+/g, '-')
+      + '-' + Date.now().toString(36); // make slug unique
 
     const payload: any = {
       name: name.trim(),
       slug,
       description: description.trim(),
-      genre: genre || '',
-      icon: icon || '🎮',
       is_private: isPrivate ? 1 : 0,
-      type: isPrivate ? 'private' : 'public',
-      privacy: isPrivate ? 'private' : 'public',
-      banner_url: '',
-      cover_url: '',
     };
 
+    // Only add optional fields if they have values
+    if (genre) payload.genre = genre;
+    if (icon) payload.icon = icon;
+
     if (linkedGame) {
-      payload.game_id = linkedGame.id;
+      payload.game_id = linkedGame.rawg_id ?? linkedGame.id;
       payload.game_title = linkedGame.title;
     }
 

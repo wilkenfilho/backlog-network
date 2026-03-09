@@ -5,9 +5,7 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
 import * as SecureStore from 'expo-secure-store';
 
-const BASE_URL = __DEV__
-  ? 'http://localhost:8000'
-  : 'https://wilkenperez.com/backlog-network-api';
+const BASE_URL = 'https://wilkenperez.com/backlog-network-api';
 
 const api: AxiosInstance = axios.create({
   baseURL: BASE_URL, timeout: 15000,
@@ -32,14 +30,33 @@ function extractError(err: unknown): string {
 
 export const authService = {
   async register(data: { username: string; email: string; password: string; display_name: string }) {
-    try { const res = await api.post('/auth/register', data); await SecureStore.setItemAsync('backlog_network_token', res.data.token); return res.data; }
-    catch (err) { throw new Error(extractError(err)); }
+    try {
+      const res = await api.post('/auth/register', data);
+      await SecureStore.setItemAsync('backlog_network_token', res.data.token);
+      const raw = res.data?.user ?? res.data;
+      return { ...res.data, user: { ...raw, displayName: raw.display_name ?? raw.displayName ?? raw.username ?? '', avatarUrl: raw.avatar_url ?? raw.avatar } };
+    } catch (err) { throw new Error(extractError(err)); }
   },
   async login(email: string, password: string) {
-    try { const res = await api.post('/auth/login', { email, password }); await SecureStore.setItemAsync('backlog_network_token', res.data.token); return res.data; }
-    catch (err) { throw new Error(extractError(err)); }
+    try {
+      const res = await api.post('/auth/login', { email, password });
+      await SecureStore.setItemAsync('backlog_network_token', res.data.token);
+      const raw = res.data?.user ?? res.data;
+      return { ...res.data, user: { ...raw, displayName: raw.display_name ?? raw.displayName ?? raw.username ?? '', avatarUrl: raw.avatar_url ?? raw.avatar } };
+    } catch (err) { throw new Error(extractError(err)); }
   },
-  async me() { try { return (await api.get('/auth/me')).data; } catch (err) { throw new Error(extractError(err)); } },
+  async me() {
+    try {
+      const res = await api.get('/auth/me');
+      const raw = res.data?.user ?? res.data;
+      return {
+        ...raw,
+        displayName: raw.display_name ?? raw.displayName ?? raw.username ?? '',
+        avatar: raw.avatar_url ?? raw.avatar,
+        avatarUrl: raw.avatar_url ?? raw.avatar,
+      };
+    } catch (err) { throw new Error(extractError(err)); }
+  },
   async logout() { await api.post('/auth/logout').catch(() => {}); await SecureStore.deleteItemAsync('backlog_network_token'); },
   async changeEmail(newEmail: string, password: string) {
     try { return (await api.post('/auth/change-email', { new_email: newEmail, password })).data; }
@@ -164,8 +181,18 @@ export const scrapsService = {
 
 export const messagesService = {
   async getConversations() { return (await api.get('/messages')).data; },
-  async getMessages(conversationId: string, page = 1) { return (await api.get(`/messages/${conversationId}`, { params: { page } })).data; },
+  async getMessages(withUserId: string, page = 1) {
+    // Try both endpoint patterns since backends vary
+    try {
+      return (await api.get(`/messages/conversation/${withUserId}`, { params: { page } })).data;
+    } catch {
+      return (await api.get('/messages', { params: { with: withUserId, page } })).data;
+    }
+  },
   async send(toUserId: string, body: string, imageUrl?: string) { return (await api.post('/messages', { to_user_id: toUserId, body, image_url: imageUrl })).data; },
+  async startConversation(toUserId: string, body: string) {
+    return (await api.post('/messages', { to_user_id: toUserId, body })).data;
+  },
 };
 
 export const fansService = {

@@ -25,7 +25,12 @@ export const useAuthStore = create<AuthStore>((set) => ({
   login: async (email, password) => {
     set({ isLoading: true, error: null });
     try {
-      const { user } = await authService.login(email, password);
+      const res = await authService.login(email, password);
+      const raw = res.user ?? res;
+      const user: User = {
+        ...raw,
+        displayName: raw.display_name ?? raw.displayName ?? raw.username ?? '',
+      };
       set({ user, isAuthenticated: true, isLoading: false });
     } catch (e: any) {
       set({ error: e.message ?? 'Erro ao entrar', isLoading: false });
@@ -36,7 +41,12 @@ export const useAuthStore = create<AuthStore>((set) => ({
   register: async (data) => {
     set({ isLoading: true, error: null });
     try {
-      const { user } = await authService.register(data);
+      const res = await authService.register(data);
+      const raw = res.user ?? res;
+      const user: User = {
+        ...raw,
+        displayName: raw.display_name ?? raw.displayName ?? raw.username ?? '',
+      };
       set({ user, isAuthenticated: true, isLoading: false });
     } catch (e: any) {
       set({ error: e.message ?? 'Erro ao criar conta', isLoading: false });
@@ -53,7 +63,11 @@ export const useAuthStore = create<AuthStore>((set) => ({
     try {
       const token = await SecureStore.getItemAsync('backlog_network_token');
       if (!token) { set({ isLoading: false }); return; }
-      const user = await authService.me();
+      const raw = await authService.me();
+      const user: User = {
+        ...raw,
+        displayName: raw.display_name ?? raw.displayName ?? raw.username ?? '',
+      };
       set({ user, isAuthenticated: true, isLoading: false });
     } catch {
       set({ isLoading: false });

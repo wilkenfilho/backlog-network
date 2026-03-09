@@ -11,7 +11,7 @@ import * as Haptics from 'expo-haptics';
 import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query';
 import { Colors, Fonts, Spacing, Radius } from '../../theme';
 import { Avatar } from '../../components';
-import { reviewsService, gamesService } from '../../services/api';
+import { reviewsService, rawgService } from '../../services/api';
 import { useAuthStore } from '../../store/authStore';
 
 export default function ReviewCreateScreen({ route }: any) {
@@ -38,14 +38,18 @@ export default function ReviewCreateScreen({ route }: any) {
     return () => clearTimeout(t);
   }, [gameSearch]);
 
-  const { data: searchResults } = useQuery({
+  const { data: searchResults, isFetching: searchFetching } = useQuery({
     queryKey: ['game-search-review', searchQuery],
-    queryFn: () => gamesService.search(searchQuery),
-    select: (res: any) => res.data ?? res ?? [],
+    queryFn: () => rawgService.search(searchQuery),
+    select: (raw: any) => Array.isArray(raw) ? raw : [],
     enabled: searchQuery.length >= 2,
   });
 
   const games = searchResults ?? [];
+  // Auto-show dropdown when results arrive
+  useEffect(() => {
+    if (games.length > 0 && !selectedGame) setShowDropdown(true);
+  }, [games]);
 
   const createMutation = useMutation({
     mutationFn: (data: any) => reviewsService.createReview(data),

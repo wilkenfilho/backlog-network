@@ -349,13 +349,24 @@ export default function ExploreScreen() {
           </View>
         ) : (
           <FlatList
-            data={steamData ?? []}
+            data={
+              isSearching && steamData
+                ? (steamData as any[]).filter((g: any) =>
+                    (g.title ?? g.name ?? '').toLowerCase().includes(debouncedSearch.toLowerCase()))
+                : (steamData ?? [])
+            }
             keyExtractor={(item: any, i) => String(item?.steam_id ?? i)}
             renderItem={({ item }) => <SteamGameCard game={item} />}
             contentContainerStyle={styles.scrollContent}
             showsVerticalScrollIndicator={false}
             refreshControl={<RefreshControl refreshing={false} onRefresh={handleRefresh} tintColor={Colors.accent} />}
-            ListEmptyComponent={() => <EmptyState emoji="🎮" title="Dados Steam indisponíveis" subtitle="Tente novamente em instantes." />}
+            ListEmptyComponent={() => (
+              <EmptyState
+                emoji="🎮"
+                title={isSearching ? `Sem resultados para "${debouncedSearch}"` : 'Dados Steam indisponíveis'}
+                subtitle={isSearching ? 'Tente outro termo.' : 'Tente novamente em instantes.'}
+              />
+            )}
             ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
           />
         )
