@@ -269,10 +269,10 @@ export const messagesService = {
   },
   async send(toUserId: string, body: string, imageUrl?: string) {
     try {
-      // Tenta os field names mais comuns — backends variam
+      // Nota: NÃO enviamos receiver_id pois causa SQLSTATE 42S22 (coluna inexistente).
+      // Enviamos to_user_id + recipient_id que são os nomes mais comuns nas tabelas messages.
       return (await api.post('/messages', {
         to_user_id: toUserId,
-        receiver_id: toUserId,
         recipient_id: toUserId,
         body,
         message: body,

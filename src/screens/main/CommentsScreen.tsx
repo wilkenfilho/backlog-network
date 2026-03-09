@@ -184,8 +184,17 @@ export default function CommentsScreen() {
     queryKey: ['comments', postId],
     queryFn: () => feedService.getComments(postId),
     select: (res: any) => {
-      const raw = res.data ?? res ?? [];
-      return Array.isArray(raw) ? raw : [];
+      // Tenta todas as estruturas comuns de resposta:
+      // { data: [...] }  |  { data: { data: [...] } }  |  { comments: [...] }
+      // { data: { comments: [...] } }  |  [...]
+      const raw =
+        (Array.isArray(res) ? res : null) ??
+        (Array.isArray(res?.data) ? res.data : null) ??
+        (Array.isArray(res?.data?.data) ? res.data.data : null) ??
+        (Array.isArray(res?.data?.comments) ? res.data.comments : null) ??
+        (Array.isArray(res?.comments) ? res.comments : null) ??
+        [];
+      return raw;
     },
     enabled: !!postId,
   });
@@ -203,8 +212,9 @@ export default function CommentsScreen() {
       queryClient.invalidateQueries({ queryKey: ['feed'] });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     },
-    onError: () => {
-      Alert.alert('Erro', 'Não foi possível enviar o comentário.');
+    onError: (err: any) => {
+      const msg = err?.message ?? 'Não foi possível enviar o comentário.';
+      Alert.alert('Erro ao comentar', String(msg).slice(0, 300));
     },
   });
 
