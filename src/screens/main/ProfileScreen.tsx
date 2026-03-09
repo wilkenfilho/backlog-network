@@ -15,6 +15,7 @@ import { Share } from 'react-native';
 import { Avatar, Button, EmptyState } from '../../components';
 import { useAuthStore } from '../../store/authStore';
 import { usersService, backlogService, reviewsService, listsService, feedService } from '../../services/api';
+import { timeAgo } from '../../utils/helpers';
 
 type ProfileTab = 'posts' | 'backlog' | 'reviews' | 'listas';
 type BacklogFilter = 'all' | 'playing' | 'finished' | 'backlog' | 'dropped' | 'wishlist';
@@ -27,14 +28,6 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; emoji: strin
   wishlist: { label: 'Desejo',   color: Colors.teal,    emoji: '⭐' },
 };
 
-function timeAgo(d: string) {
-  if (!d) return '';
-  const s = (Date.now() - new Date(d).getTime()) / 1000;
-  if (s < 3600)   return `${Math.floor(s / 60)}min`;
-  if (s < 86400)  return `${Math.floor(s / 3600)}h`;
-  if (s < 604800) return `${Math.floor(s / 86400)}d`;
-  return `${Math.floor(s / 604800)}sem`;
-}
 
 function XPBar({ xp, level }: { xp: number; level: number }) {
   const nextLevelXp = level * 500;

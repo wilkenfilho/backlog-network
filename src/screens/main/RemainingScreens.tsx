@@ -11,6 +11,7 @@ import * as Haptics from 'expo-haptics';
 
 import { Colors, Fonts, Spacing, Radius } from '../../theme';
 import { Avatar, EmptyState } from '../../components';
+import { timeAgo } from '../../utils/helpers';
 
 type NotifType = 'like_post' | 'like_review' | 'comment' | 'follow' | 'new_scrap' | 'new_fan' | 'community_approved' | 'achievement' | 'game_release';
 
@@ -42,13 +43,6 @@ const MOCK_NOTIFS: Notif[] = [
   { id: 'n8', type: 'like_post',         is_read: true,  created_at: new Date(Date.now() - 432000000).toISOString(), message: 'rodrigao e mais 14 curtiram seu post', actor_username: 'rodrigao', actor_id: 'u3' },
 ];
 
-function timeAgo(d: string) {
-  const s = (Date.now() - new Date(d).getTime()) / 1000;
-  if (s < 60)    return 'agora';
-  if (s < 3600)  return `${Math.floor(s/60)}min`;
-  if (s < 86400) return `${Math.floor(s/3600)}h`;
-  return `${Math.floor(s/86400)}d`;
-}
 
 function NotifItem({ notif, onPress, onRead }: { notif: Notif; onPress: () => void; onRead: () => void }) {
   const cfg = TYPE_CONFIG[notif.type];

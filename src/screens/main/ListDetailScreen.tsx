@@ -13,14 +13,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Colors, Fonts, Spacing, Radius } from '../../theme';
 import { useAuthStore } from '../../store/authStore';
 import { listsService, rawgService } from '../../services/api';
+import { timeAgo } from '../../utils/helpers';
 
-function timeAgo(d: string) {
-  if (!d) return '';
-  const s = (Date.now() - new Date(d).getTime()) / 1000;
-  if (s < 3600) return `${Math.floor(s / 60)}min`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h`;
-  return `${Math.floor(s / 86400)}d`;
-}
 
 // ─── ADD GAME MODAL ──────────────────────────────────────────────────────────
 function AddGameModal({ visible, onClose, onAdd }: {

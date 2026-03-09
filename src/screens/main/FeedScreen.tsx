@@ -2,7 +2,7 @@ import React, { useCallback, useRef, useState } from 'react';
 import {
   View, Text, FlatList, StyleSheet, TouchableOpacity, ScrollView,
   RefreshControl, Animated, Modal, Share, Alert, Image as RNImage,
-  Dimensions, Pressable,
+  Dimensions, Pressable, ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -11,27 +11,20 @@ import { BlurView } from 'expo-blur';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Image } from 'expo-image';
 
 import { Colors, Fonts, Spacing, Radius, Shadows } from '../../theme';
-import { Avatar, StatusBadge, GameCover, StarRating, ProgressBar, EmptyState } from '../../components';
+import { Avatar, StatusBadge, GameCover, StarRating, ProgressBar, EmptyState, GlassCard } from '../../components';
 import { feedService, storiesService, uploadService } from '../../services/api';
 import api from '../../services/api';
 import { useAuthStore } from '../../store/authStore';
+import { timeAgo } from '../../utils/helpers';
 import type { Post, GameStatus } from '../../types';
 
 const { width: SW } = Dimensions.get('window');
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
-function timeAgo(dateStr: string): string {
-  if (!dateStr) return '';
-  const diff = (Date.now() - new Date(dateStr).getTime()) / 1000;
-  if (diff < 60) return 'agora';
-  if (diff < 3600) return `há ${Math.floor(diff / 60)}min`;
-  if (diff < 86400) return `há ${Math.floor(diff / 3600)}h`;
-  return `há ${Math.floor(diff / 86400)}d`;
-}
 
 // Normalize a raw post from any backend shape
 function normalizePost(p: any): Post {
@@ -94,7 +87,7 @@ function PostMenuModal({ visible, onClose, post, isOwner, onDelete, onReport, on
 }
 
 // ─── POST CARD ────────────────────────────────────────────────────────────────
-function PostCard({ post, onLike, onComment, onShare, onGamePress, onUserPress, onMore }: any) {
+const PostCard = React.memo(function PostCard({ post, onLike, onComment, onShare, onGamePress, onUserPress, onMore }: any) {
   const [liked, setLiked] = useState(post.isLiked ?? false);
   const [likeCount, setLikeCount] = useState(post.likesCount);
   const scale = useRef(new Animated.Value(1)).current;
@@ -121,7 +114,7 @@ function PostCard({ post, onLike, onComment, onShare, onGamePress, onUserPress, 
   const username = post.user?.username || '';
 
   return (
-    <View style={styles.card}>
+    <GlassCard style={styles.card}>
       <View style={styles.cardHeader}>
         <Avatar user={post.user} size={40} onPress={() => onUserPress(post.user)} />
         <View style={styles.cardHeaderInfo}>
@@ -166,9 +159,9 @@ function PostCard({ post, onLike, onComment, onShare, onGamePress, onUserPress, 
           <Text style={styles.actionIcon}>↗</Text>
         </TouchableOpacity>
       </View>
-    </View>
+    </GlassCard>
   );
-}
+});
 
 // ─── STORIES VIEWER ──────────────────────────────────────────────────────────
 function StoriesViewer({ stories, startIdx, onClose }: { stories: any[]; startIdx: number; onClose: () => void }) {
@@ -416,32 +409,31 @@ export default function FeedScreen() {
   const [menuPost, setMenuPost] = useState<Post | null>(null);
   const [menuVisible, setMenuVisible] = useState(false);
 
-  const { data: feedData, refetch, isRefetching } = useQuery({
+  const {
+    data: feedData,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+    refetch,
+    isRefetching,
+  } = useInfiniteQuery({
     queryKey: ['feed', activeTab],
-    queryFn: () => feedService.getFeed({ filter: activeTab }),
-    select: (res: any) => {
-      const raw = res.data?.data ?? res.data ?? [];
-      return (Array.isArray(raw) ? raw : []).map(normalizePost);
+    queryFn: ({ pageParam = 1 }) => feedService.getFeed({ filter: activeTab, page: pageParam }),
+    getNextPageParam: (lastPage: any) => {
+      const d = lastPage?.data ?? lastPage;
+      return d?.nextPage ?? null;
     },
+    initialPageParam: 1,
   });
 
-  const posts = feedData ?? [];
+  // Flatten pages into a single list of normalized posts
+  const posts = (feedData?.pages ?? []).flatMap((page: any) => {
+    const raw = page?.data?.data ?? page?.data ?? [];
+    return (Array.isArray(raw) ? raw : []).map(normalizePost);
+  });
 
   const handleLike = useCallback((postId: string, nowLiked: boolean) => {
-    // Optimistically update the query cache
-    queryClient.setQueryData(['feed', activeTab], (old: any) => {
-      if (!old) return old;
-      const raw = old?.data ?? old;
-      if (Array.isArray(raw)) {
-        const updated = raw.map((p: any) =>
-          p.id === postId
-            ? { ...p, liked_by_me: nowLiked, likes_count: (p.likes_count ?? 0) + (nowLiked ? 1 : -1) }
-            : p
-        );
-        return old?.data !== undefined ? { ...old, data: updated } : updated;
-      }
-      return old;
-    });
+    // Fire API call
     if (nowLiked) {
       feedService.likePost(postId).catch(() => {
         queryClient.invalidateQueries({ queryKey: ['feed', activeTab] });
@@ -451,7 +443,7 @@ export default function FeedScreen() {
         queryClient.invalidateQueries({ queryKey: ['feed', activeTab] });
       });
     }
-  }, [posts, activeTab, queryClient]);
+  }, [activeTab, queryClient]);
 
   const handleDeletePost = async () => {
     if (!menuPost) return;
@@ -517,8 +509,19 @@ export default function FeedScreen() {
         )}
         contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={false}
+        onEndReached={() => {
+          if (hasNextPage && !isFetchingNextPage) {
+            fetchNextPage();
+          }
+        }}
+        onEndReachedThreshold={0.5}
         refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={Colors.accent} colors={[Colors.accent]} />}
         ListEmptyComponent={() => <EmptyState emoji="📝" title="Nenhum post ainda" subtitle="Publique algo ou siga outros gamers!" action="Criar post" onAction={() => navigation.navigate('CreatePost')} />}
+        ListFooterComponent={() =>
+          isFetchingNextPage ? (
+            <ActivityIndicator color={Colors.accent} style={{ marginVertical: 20 }} />
+          ) : null
+        }
         ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
       />
 

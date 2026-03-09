@@ -7,6 +7,7 @@ import * as Haptics from 'expo-haptics';
 import { Colors, Fonts, Spacing, Radius } from '../../theme';
 import { Avatar, EmptyState } from '../../components';
 import { notificationsService } from '../../services/api';
+import { timeAgo } from '../../utils/helpers';
 
 const TYPE_CONFIG: Record<string, { emoji: string; color: string }> = {
   like_post:          { emoji: '♥',  color: Colors.red },
@@ -20,13 +21,6 @@ const TYPE_CONFIG: Record<string, { emoji: string; color: string }> = {
   game_release:       { emoji: '🎮', color: Colors.purple },
 };
 
-function timeAgo(d: string) {
-  const s = (Date.now() - new Date(d).getTime()) / 1000;
-  if (s < 60)    return 'agora';
-  if (s < 3600)  return `${Math.floor(s / 60)}min`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h`;
-  return `${Math.floor(s / 86400)}d`;
-}
 
 export default function NotificationsScreen() {
   const insets = useSafeAreaInsets();

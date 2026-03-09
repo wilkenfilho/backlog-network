@@ -202,6 +202,44 @@ if ($route === 'setup' && $method === 'GET') {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     $tables[] = 'messages';
 
+    // ── Communities ──
+    $db->exec("CREATE TABLE IF NOT EXISTS communities (
+        id VARCHAR(36) PRIMARY KEY,
+        slug VARCHAR(120) NOT NULL UNIQUE,
+        name VARCHAR(120) NOT NULL,
+        description TEXT,
+        cover_url TEXT,
+        genre VARCHAR(60),
+        is_private TINYINT(1) DEFAULT 0,
+        created_by VARCHAR(36) NOT NULL,
+        game_id VARCHAR(36),
+        game_title VARCHAR(200),
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_slug (slug),
+        INDEX idx_created_by (created_by)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $tables[] = 'communities';
+
+    $db->exec("CREATE TABLE IF NOT EXISTS community_members (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        community_id VARCHAR(36) NOT NULL,
+        user_id VARCHAR(36) NOT NULL,
+        role VARCHAR(20) DEFAULT 'member',
+        joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uniq_member (community_id, user_id),
+        INDEX idx_community (community_id),
+        INDEX idx_user (user_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $tables[] = 'community_members';
+
+    // Garante que a coluna is_private existe (para tabelas criadas antes desta atualização)
+    try {
+        $db->exec("ALTER TABLE communities ADD COLUMN is_private TINYINT(1) DEFAULT 0 AFTER genre");
+    } catch (PDOException $e) {
+        // Coluna já existe — ignorar
+    }
+
     respond(200, ['ok' => true, 'tables_ensured' => $tables]);
 }
 
@@ -401,7 +439,8 @@ if ($route === 'feed' && $method === 'GET') {
         }
         unset($post['username'], $post['display_name'], $post['avatar_url'], $post['game_title'], $post['game_cover'], $post['game_dev']);
     }
-    respond(200, ['data' => $posts, 'meta' => ['page' => $pg['page'], 'limit' => $pg['limit']]]);
+    $nextPage = count($posts) === $pg['limit'] ? $pg['page'] + 1 : null;
+    respond(200, ['data' => $posts, 'nextPage' => $nextPage, 'meta' => ['page' => $pg['page'], 'limit' => $pg['limit']]]);
 }
 
 // ============================================================
@@ -482,7 +521,7 @@ if ($route === 'games') {
         if (strlen($q) < 2) respond(200, ['data' => []]);
 
         // 1. Busca no cache local primeiro
-        $stmt = db()->prepare('SELECT id, title, developer, cover_url, rawg_rating, backlog-network_rating FROM games WHERE title LIKE ? LIMIT 20');
+        $stmt = db()->prepare('SELECT id, title, developer, cover_url, rawg_rating, `backlog-network_rating` FROM games WHERE title LIKE ? LIMIT 20');
         $stmt->execute(["%$q%"]);
         $local = $stmt->fetchAll();
 
@@ -522,7 +561,7 @@ if ($route === 'games') {
     if ($sub === 'trending' && $method === 'GET') {
         auth_required();
         $stmt = db()->prepare('
-            SELECT g.id, g.title, g.cover_url, g.developer, g.backlog-network_rating,
+            SELECT g.id, g.title, g.cover_url, g.developer, g.`backlog-network_rating`,
                    COUNT(b.id) AS activity
             FROM games g
             LEFT JOIN backlog b ON b.game_id = g.id AND b.updated_at > DATE_SUB(NOW(), INTERVAL 7 DAY)
@@ -686,7 +725,7 @@ if ($route === 'reviews') {
         }
 
         // Atualiza nota média do jogo
-        db()->prepare('UPDATE games SET backlog-network_rating = (SELECT AVG(rating) FROM reviews WHERE game_id = ?), reviews_count = (SELECT COUNT(*) FROM reviews WHERE game_id = ?) WHERE id = ?')
+        db()->prepare('UPDATE games SET `backlog-network_rating` = (SELECT AVG(rating) FROM reviews WHERE game_id = ?), reviews_count = (SELECT COUNT(*) FROM reviews WHERE game_id = ?) WHERE id = ?')
             ->execute([$b['game_id'], $b['game_id'], $b['game_id']]);
 
         // Cria post automático no feed
@@ -720,7 +759,7 @@ if ($route === 'reviews') {
         $row = $r->fetch();
         if (!$row) respond(404, ['error' => 'Review não encontrada']);
         $db->prepare('DELETE FROM reviews WHERE id = ?')->execute([$sub]);
-        $db->prepare('UPDATE games SET backlog-network_rating = (SELECT COALESCE(AVG(rating),0) FROM reviews WHERE game_id = ?), reviews_count = (SELECT COUNT(*) FROM reviews WHERE game_id = ?) WHERE id = ?')
+        $db->prepare('UPDATE games SET `backlog-network_rating` = (SELECT COALESCE(AVG(rating),0) FROM reviews WHERE game_id = ?), reviews_count = (SELECT COUNT(*) FROM reviews WHERE game_id = ?) WHERE id = ?')
            ->execute([$row['game_id'], $row['game_id'], $row['game_id']]);
         respond(200, ['ok' => true]);
     }

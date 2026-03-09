@@ -11,6 +11,7 @@ import * as Haptics from 'expo-haptics';
 import { Colors, Fonts, Spacing, Radius, Shadows } from '../../theme';
 import { Avatar, Button } from '../../components';
 import { useAuthStore } from '../../store/authStore';
+import { timeAgo } from '../../utils/helpers';
 
 interface Reply {
   id: string; user_id: string; username: string;
@@ -47,13 +48,6 @@ const MOCK_REPLIES: Reply[] = [
   { id: 'r5', user_id: 'u1', username: 'wilken', display_name: 'Wilken P.', user_role: 'owner', body: 'Chamei ele umas 4 vezes sem vergonha nenhuma hahahaha', likes_count: 56, is_liked: false, parent_id: 'r4', created_at: new Date(Date.now() - 2700000).toISOString(), is_removed: false },
 ];
 
-function timeAgo(d: string) {
-  const s = (Date.now() - new Date(d).getTime()) / 1000;
-  if (s < 60) return 'agora';
-  if (s < 3600) return `${Math.floor(s / 60)}min`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h`;
-  return `${Math.floor(s / 86400)}d`;
-}
 
 // ─── REPLY CARD ──────────────────────────────────────────────────────────────
 function ReplyCard({ reply, isNested = false, myRole, onReply, onLike, onModerate }: {

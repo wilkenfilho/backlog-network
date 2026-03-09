@@ -12,6 +12,9 @@ import * as Haptics from 'expo-haptics';
 import { Colors, Fonts, Radius, Spacing, Shadows, Typography } from '../theme';
 import type { Game, User, GameStatus } from '../types';
 
+// Re-export shared theme components
+export { GlassCard, ThemedText } from './ThemeComponents';
+
 // ─── BUTTON ──────────────────────────────────────────────────────────────────
 interface ButtonProps {
   label: string;
@@ -121,6 +124,7 @@ export function Avatar({ user, size = 40, onPress }: { user: Partial<User> & { a
           style={{ width: size, height: size, borderRadius }}
           contentFit="cover"
           transition={200}
+          cachePolicy="memory-disk"
         />
       </TouchableOpacity>
     );
@@ -158,6 +162,7 @@ export function GameCover({ game, width = 56, height = 72, borderRadius = Radius
         style={{ width, height, borderRadius }}
         contentFit="cover"
         transition={300}
+        cachePolicy="memory-disk"
       />
     );
   }

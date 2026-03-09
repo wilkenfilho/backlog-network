@@ -69,7 +69,10 @@ export const authService = {
 };
 
 export const feedService = {
-  async getFeed(params: { filter?: string; page?: number } = {}) { return api.get('/feed', { params }); },
+  async getFeed(params: { filter?: string; page?: number } = {}) {
+    const res = await api.get('/feed', { params: { type: params.filter, page: params.page ?? 1 } });
+    return res.data; // { data: [...], nextPage: N|null, meta: {...} }
+  },
   async createPost(data: any) {
     return (await api.post('/posts', {
       text: data.content ?? data.text,

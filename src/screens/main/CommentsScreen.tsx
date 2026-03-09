@@ -13,15 +13,7 @@ import { Colors, Fonts, Spacing, Radius } from '../../theme';
 import { Avatar } from '../../components';
 import { feedService } from '../../services/api';
 import { useAuthStore } from '../../store/authStore';
-
-// ─── HELPERS ──────────────────────────────────────────────────────────────────
-function timeAgo(dateStr: string): string {
-  const diff = (Date.now() - new Date(dateStr).getTime()) / 1000;
-  if (diff < 60) return 'agora';
-  if (diff < 3600) return `${Math.floor(diff / 60)}min`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
-  return `${Math.floor(diff / 86400)}d`;
-}
+import { timeAgo } from '../../utils/helpers';
 
 // ─── TYPES ────────────────────────────────────────────────────────────────────
 interface CommentItem {
@@ -242,8 +234,8 @@ export default function CommentsScreen() {
   return (
     <KeyboardAvoidingView
       style={[styles.container, { paddingTop: insets.top }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={0}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 24}
     >
       {/* Header */}
       <View style={styles.header}>

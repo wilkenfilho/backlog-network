@@ -12,15 +12,10 @@ import { Colors, Fonts, Spacing, Radius, Shadows } from '../../theme';
 import { EmptyState } from '../../components';
 import { reviewsService } from '../../services/api';
 import { useAuthStore } from '../../store/authStore';
+import { timeAgo } from '../../utils/helpers';
 
 type Filter = 'all' | 'recent' | 'top';
 
-function timeAgo(d: string) {
-  const s = (Date.now() - new Date(d).getTime()) / 1000;
-  if (s < 86400)   return `${Math.floor(s / 3600)}h`;
-  if (s < 604800)  return `${Math.floor(s / 86400)}d`;
-  return `${Math.floor(s / 604800)}sem`;
-}
 
 function ReviewCard({ review, onPress }: { review: any; onPress: () => void }) {
   const [liked, setLiked] = useState(review.liked_by_me ?? false);

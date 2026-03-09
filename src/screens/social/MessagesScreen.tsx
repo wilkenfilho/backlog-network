@@ -13,6 +13,7 @@ import { Colors, Fonts, Spacing, Radius, Shadows } from '../../theme';
 import { Avatar, EmptyState } from '../../components';
 import { useAuthStore } from '../../store/authStore';
 import { messagesService, usersService } from '../../services/api';
+import { timeAgo } from '../../utils/helpers';
 
 // ─── TYPES ───────────────────────────────────────────────────────────────────
 interface Conversation {
@@ -33,13 +34,6 @@ interface Scrap {
 }
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
-function timeAgo(d: string): string {
-  const s = (Date.now() - new Date(d).getTime()) / 1000;
-  if (s < 60)    return 'agora';
-  if (s < 3600)  return `${Math.floor(s/60)}min`;
-  if (s < 86400) return `${Math.floor(s/3600)}h`;
-  return `${Math.floor(s/86400)}d`;
-}
 
 // ─── CONVERSATIONS LIST ───────────────────────────────────────────────────────
 function ConversationItem({ conv, onPress }: { conv: Conversation; onPress: () => void }) {

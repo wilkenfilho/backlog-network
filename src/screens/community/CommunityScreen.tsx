@@ -13,6 +13,7 @@ import * as Haptics from 'expo-haptics';
 import { Colors, Fonts, Spacing, Radius, Shadows } from '../../theme';
 import { Avatar, Button, EmptyState, SectionHeader } from '../../components';
 import { useAuthStore } from '../../store/authStore';
+import { timeAgo } from '../../utils/helpers';
 
 // ─── TYPES ───────────────────────────────────────────────────────────────────
 type Role = 'owner' | 'admin' | 'mod' | 'member' | 'banned' | null;
@@ -69,13 +70,6 @@ const ROLE_CONFIG: Record<string, { label: string; color: string; emoji: string 
   member:{ label: 'Membro',     color: Colors.muted, emoji: '' },
 };
 
-function timeAgo(d: string): string {
-  const s = (Date.now() - new Date(d).getTime()) / 1000;
-  if (s < 60)    return 'agora';
-  if (s < 3600)  return `${Math.floor(s/60)}min`;
-  if (s < 86400) return `${Math.floor(s/3600)}h`;
-  return `${Math.floor(s/86400)}d`;
-}
 
 function formatCount(n: number): string {
   if (n >= 1000) return `${(n/1000).toFixed(1)}k`;

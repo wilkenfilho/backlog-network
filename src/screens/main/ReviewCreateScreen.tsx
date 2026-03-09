@@ -11,7 +11,7 @@ import * as Haptics from 'expo-haptics';
 import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query';
 import { Colors, Fonts, Spacing, Radius } from '../../theme';
 import { Avatar } from '../../components';
-import { reviewsService, rawgService } from '../../services/api';
+import { reviewsService, gamesService } from '../../services/api';
 import { useAuthStore } from '../../store/authStore';
 
 export default function ReviewCreateScreen({ route }: any) {
@@ -40,8 +40,11 @@ export default function ReviewCreateScreen({ route }: any) {
 
   const { data: searchResults, isFetching: searchFetching } = useQuery({
     queryKey: ['game-search-review', searchQuery],
-    queryFn: () => rawgService.search(searchQuery),
-    select: (raw: any) => Array.isArray(raw) ? raw : [],
+    queryFn: () => gamesService.search(searchQuery),
+    select: (raw: any) => {
+      const arr = raw?.data ?? raw;
+      return Array.isArray(arr) ? arr : [];
+    },
     enabled: searchQuery.length >= 2,
   });
 
