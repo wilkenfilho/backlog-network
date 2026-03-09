@@ -41,6 +41,14 @@ export const authService = {
   },
   async me() { try { return (await api.get('/auth/me')).data; } catch (err) { throw new Error(extractError(err)); } },
   async logout() { await api.post('/auth/logout').catch(() => {}); await SecureStore.deleteItemAsync('backlog_network_token'); },
+  async changeEmail(newEmail: string, password: string) {
+    try { return (await api.post('/auth/change-email', { new_email: newEmail, password })).data; }
+    catch (err) { throw new Error(extractError(err)); }
+  },
+  async changePassword(currentPassword: string, newPassword: string) {
+    try { return (await api.post('/auth/change-password', { current_password: currentPassword, new_password: newPassword })).data; }
+    catch (err) { throw new Error(extractError(err)); }
+  },
 };
 
 export const feedService = {
@@ -97,6 +105,11 @@ export const usersService = {
   async getSuggested() { return api.get('/users/suggested'); },
   async search(q: string) { return (await api.get('/users/search', { params: { q } })).data; },
   async updateProfile(data: object) { return (await api.patch('/users/me', data)).data; },
+  async getPrivacy() { return (await api.get('/users/me/privacy')).data; },
+  async updatePrivacy(data: object) { return (await api.patch('/users/me/privacy', data)).data; },
+  async getBlockedUsers() { return (await api.get('/users/me/blocked')).data; },
+  async blockUser(userId: string) { return (await api.post(`/users/${userId}/block`)).data; },
+  async unblockUser(userId: string) { return (await api.delete(`/users/${userId}/block`)).data; },
 };
 
 export const notificationsService = {
