@@ -40,16 +40,8 @@ export default function OnboardingScreen() {
     ).start();
   }, []);
 
-  const handleApple = async () => {
+  const handleEmail = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    // TODO: expo-apple-authentication
-    // For demo, navigate to login
-    navigation.navigate('Login');
-  };
-
-  const handleGoogle = async () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    // TODO: expo-auth-session Google
     navigation.navigate('Login');
   };
 
@@ -114,34 +106,18 @@ export default function OnboardingScreen() {
 
       {/* AUTH BUTTONS */}
       <Animated.View style={[styles.authArea, { paddingBottom: insets.bottom + 20, opacity: fadeAnim }]}>
-        {/* Apple Sign In */}
-        <TouchableOpacity style={styles.appleBtn} onPress={handleApple} activeOpacity={0.85}>
-          <Text style={styles.appleBtnIcon}></Text>
-          <Text style={styles.appleBtnText}>Continuar com Apple</Text>
-        </TouchableOpacity>
 
-        {/* Google Sign In */}
-        <TouchableOpacity style={styles.googleBtn} onPress={handleGoogle} activeOpacity={0.85}>
-          <Text style={styles.googleIcon}>G</Text>
-          <Text style={styles.googleBtnText}>Continuar com Google</Text>
-        </TouchableOpacity>
-
-        {/* Divider */}
-        <View style={styles.divider}>
-          <View style={styles.dividerLine} />
-          <Text style={styles.dividerText}>ou</Text>
-          <View style={styles.dividerLine} />
-        </View>
-
-        {/* Email */}
-        <TouchableOpacity style={styles.emailBtn} onPress={() => navigation.navigate('Login')}>
-          <Text style={styles.emailBtnText}>Entrar com email</Text>
+        {/* Email — CTA principal */}
+        <TouchableOpacity style={styles.emailBtn} onPress={handleEmail} activeOpacity={0.85}>
+          <LinearGradient colors={[Colors.accent, Colors.accentDark]} style={styles.emailBtnGradient}>
+            <Text style={styles.emailBtnText}>Entrar com email</Text>
+          </LinearGradient>
         </TouchableOpacity>
 
         {/* Register link */}
         <View style={styles.registerRow}>
           <Text style={styles.registerLabel}>Não tem conta? </Text>
-          <TouchableOpacity onPress={() => navigation.navigate('Register')}>
+          <TouchableOpacity onPress={() => navigation.navigate('Login')}>
             <Text style={styles.registerLink}>Criar agora</Text>
           </TouchableOpacity>
         </View>
@@ -192,34 +168,13 @@ const styles = StyleSheet.create({
   proofAvatar: { width: 28, height: 28, borderRadius: 8, borderWidth: 2, borderColor: Colors.bg },
   proofText: { fontFamily: Fonts.body, fontSize: 13, color: Colors.muted },
 
-  authArea: { paddingHorizontal: Spacing.xxl, gap: 10 },
+  authArea: { paddingHorizontal: Spacing.xxl, gap: 12 },
 
-  appleBtn: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10,
-    backgroundColor: '#fff', borderRadius: Radius.lg, paddingVertical: 15,
-  },
-  appleBtnIcon: { fontSize: 20, color: '#000' },
-  appleBtnText: { fontFamily: Fonts.bodyBold, fontSize: 15, color: '#000' },
+  emailBtn: { borderRadius: Radius.lg, overflow: 'hidden' },
+  emailBtnGradient: { paddingVertical: 16, alignItems: 'center' },
+  emailBtnText: { fontFamily: Fonts.monoBold, fontSize: 15, color: '#0a0a0f', letterSpacing: 0.5 },
 
-  googleBtn: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10,
-    backgroundColor: Colors.surface, borderRadius: Radius.lg, paddingVertical: 15,
-    borderWidth: 1, borderColor: Colors.border,
-  },
-  googleIcon: { fontFamily: Fonts.monoBold, fontSize: 16, color: '#4285F4' },
-  googleBtnText: { fontFamily: Fonts.bodyBold, fontSize: 15, color: Colors.text },
-
-  divider: { flexDirection: 'row', alignItems: 'center', gap: 12, marginVertical: 4 },
-  dividerLine: { flex: 1, height: 1, backgroundColor: Colors.border },
-  dividerText: { fontFamily: Fonts.mono, fontSize: 11, color: Colors.muted },
-
-  emailBtn: {
-    backgroundColor: 'transparent', borderRadius: Radius.lg, paddingVertical: 13,
-    borderWidth: 1, borderColor: Colors.border, alignItems: 'center',
-  },
-  emailBtnText: { fontFamily: Fonts.bodyMedium, fontSize: 14, color: Colors.text },
-
-  registerRow: { flexDirection: 'row', justifyContent: 'center', marginTop: 4 },
+  registerRow: { flexDirection: 'row', justifyContent: 'center', marginTop: 2 },
   registerLabel: { fontFamily: Fonts.body, fontSize: 13, color: Colors.muted },
   registerLink: { fontFamily: Fonts.bodyBold, fontSize: 13, color: Colors.accent },
 
