@@ -575,29 +575,83 @@ if ($route === 'games') {
 
     // GET /games/:id
     if ($sub && !$id && $method === 'GET') {
-        // $sub aqui é o UUID do game
         auth_required();
+
+        // Tenta buscar por UUID interno primeiro
         $stmt = db()->prepare('SELECT * FROM games WHERE id = ?');
         $stmt->execute([$sub]);
         $game = $stmt->fetch();
+
+        // Se não achou, tenta por rawg_id
+        if (!$game) {
+            $stmt2 = db()->prepare('SELECT * FROM games WHERE rawg_id = ?');
+            $stmt2->execute([$sub]);
+            $game = $stmt2->fetch();
+        }
+
+        // Se ainda não achou e parece numérico (rawg_id), tenta buscar na RAWG e cachear
+        if (!$game && is_numeric($sub)) {
+            $url = 'https://api.rawg.io/api/games/' . $sub . '?key=' . RAWG_API_KEY;
+            $raw = @file_get_contents($url);
+            if ($raw) {
+                $rg = json_decode($raw, true);
+                if ($rg && isset($rg['id'])) {
+                    $gameId = uuid();
+                    $slug = $rg['slug'] ?? strtolower(str_replace(' ', '-', $rg['name']));
+                    try {
+                        db()->prepare('INSERT IGNORE INTO games (id, rawg_id, title, slug, cover_url, developer, rawg_rating, release_date, description) VALUES (?,?,?,?,?,?,?,?,?)')
+                           ->execute([$gameId, $rg['id'], $rg['name'], $slug, $rg['background_image'], $rg['developers'][0]['name'] ?? null, $rg['rating'] ?? null, $rg['released'] ?? null, $rg['description_raw'] ?? null]);
+                    } catch (PDOException $e) {
+                        // Pode ter sido inserido por outra request, busca de novo
+                        $stmt3 = db()->prepare('SELECT * FROM games WHERE rawg_id = ?');
+                        $stmt3->execute([$sub]);
+                        $game = $stmt3->fetch();
+                    }
+                    if (!$game) {
+                        $stmt4 = db()->prepare('SELECT * FROM games WHERE id = ?');
+                        $stmt4->execute([$gameId]);
+                        $game = $stmt4->fetch();
+                    }
+                }
+            }
+        }
+
         if (!$game) respond(404, ['error' => 'Jogo não encontrado']);
 
         // Plataformas e gêneros
-        $plat = db()->prepare('SELECT platform FROM game_platforms WHERE game_id = ?');
-        $plat->execute([$sub]);
-        $game['platforms'] = array_column($plat->fetchAll(), 'platform');
+        try {
+            $plat = db()->prepare('SELECT platform FROM game_platforms WHERE game_id = ?');
+            $plat->execute([$game['id']]);
+            $game['platforms'] = array_column($plat->fetchAll(), 'platform');
+        } catch (PDOException $e) { $game['platforms'] = []; }
 
-        $gen = db()->prepare('SELECT genre FROM game_genres WHERE game_id = ?');
-        $gen->execute([$sub]);
-        $game['genres'] = array_column($gen->fetchAll(), 'genre');
+        try {
+            $gen = db()->prepare('SELECT genre FROM game_genres WHERE game_id = ?');
+            $gen->execute([$game['id']]);
+            $game['genres'] = array_column($gen->fetchAll(), 'genre');
+        } catch (PDOException $e) { $game['genres'] = []; }
 
         respond(200, $game);
     }
 
     // GET /games/:id/reviews
-    if ($id && $action === 'reviews' && $method === 'GET') {
+    if ($sub && $id === 'reviews' && $method === 'GET') {
         auth_required();
         $pg = paginate();
+
+        // Resolve game: aceita UUID interno OU rawg_id numérico
+        $resolvedGameId = $sub;
+        $check = db()->prepare('SELECT id FROM games WHERE id = ? LIMIT 1');
+        $check->execute([$sub]);
+        $row = $check->fetch();
+        if (!$row) {
+            // Tenta buscar por rawg_id
+            $check2 = db()->prepare('SELECT id FROM games WHERE rawg_id = ? LIMIT 1');
+            $check2->execute([$sub]);
+            $row2 = $check2->fetch();
+            if ($row2) $resolvedGameId = $row2['id'];
+        }
+
         $stmt = db()->prepare('
             SELECT r.*, u.username, u.display_name, u.avatar_url
             FROM reviews r JOIN users u ON u.id = r.user_id
@@ -605,8 +659,18 @@ if ($route === 'games') {
             ORDER BY r.likes_count DESC, r.created_at DESC
             LIMIT ? OFFSET ?
         ');
-        $stmt->execute([$id, $pg['limit'], $pg['offset']]);
-        respond(200, ['data' => $stmt->fetchAll()]);
+        $stmt->execute([$resolvedGameId, $pg['limit'], $pg['offset']]);
+        $reviews = $stmt->fetchAll();
+        foreach ($reviews as &$rv) {
+            $rv['user'] = [
+                'id' => $rv['user_id'],
+                'username' => $rv['username'],
+                'display_name' => $rv['display_name'],
+                'avatar_url' => $rv['avatar_url'],
+            ];
+            unset($rv['username'], $rv['display_name'], $rv['avatar_url']);
+        }
+        respond(200, ['data' => $reviews]);
     }
 }
 
@@ -1281,6 +1345,14 @@ if ($resource === 'users' && $sub && $id === 'lists' && $method === 'GET') {
 
 // ─── ROUTE: /communities ─────────────────────────────────────────────────────
 if ($route === 'communities' || $resource === 'communities') {
+    // Auto-migrate: garante que is_private existe (para tabelas criadas antes desta atualização)
+    static $communities_migrated = false;
+    if (!$communities_migrated) {
+        try { db()->exec("ALTER TABLE communities ADD COLUMN is_private TINYINT(1) DEFAULT 0 AFTER genre"); } catch (PDOException $e) { /* já existe */ }
+        try { db()->exec("ALTER TABLE communities ADD COLUMN game_id VARCHAR(36) AFTER created_by"); } catch (PDOException $e) { /* já existe */ }
+        try { db()->exec("ALTER TABLE communities ADD COLUMN game_title VARCHAR(200) AFTER game_id"); } catch (PDOException $e) { /* já existe */ }
+        $communities_migrated = true;
+    }
     // GET /communities — lista todas
     if ($method === 'GET' && !$sub && !$id) {
         auth_required();
