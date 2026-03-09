@@ -135,11 +135,12 @@ export default function CreateCommunityScreen() {
     onSuccess: (res: any) => {
       queryClient.invalidateQueries({ queryKey: ['communities'] });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      // Navigate to the newly created community instead of just going back
       const community = res?.community ?? res?.data ?? res;
       const communityId = community?.id ?? community?.slug;
+      // Garante que o criador aparece como owner imediatamente, sem depender do backend
+      const communityWithRole = { ...community, my_role: 'owner' };
       if (communityId) {
-        navigation.replace('Community', { communityId, community });
+        navigation.replace('Community', { communityId, community: communityWithRole });
       } else {
         navigation.goBack();
       }

@@ -12,7 +12,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 import { Colors, Fonts, Spacing, Radius } from '../../theme';
 import { useAuthStore } from '../../store/authStore';
-import { listsService, rawgService } from '../../services/api';
+import { listsService, rawgService, gamesService } from '../../services/api';
 import { timeAgo } from '../../utils/helpers';
 
 
@@ -152,8 +152,15 @@ export default function ListDetailScreen() {
   });
 
   const addGameMutation = useMutation({
-    mutationFn: ({ gameId, notes }: { gameId: string; notes?: string }) =>
-      listsService.addGame(listId, gameId, notes),
+    mutationFn: async ({ rawgId, rawgTitle, notes }: { rawgId: string; rawgTitle?: string; notes?: string }) => {
+      // Resolve rawg_id → UUID local (mesmo padrão da comunidade)
+      let gameId = rawgId;
+      try {
+        const localGame = await gamesService.getOrCreate(rawgId, rawgTitle);
+        if (localGame?.id) gameId = localGame.id;
+      } catch { /* se falhar, tenta enviar o rawg_id mesmo e deixa o backend tratar */ }
+      return listsService.addGame(listId, gameId, notes);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['list-items', listId] });
       queryClient.invalidateQueries({ queryKey: ['list-detail', listId] });
@@ -161,7 +168,8 @@ export default function ListDetailScreen() {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     },
     onError: (e: any) => {
-      Alert.alert('Erro', e?.message ?? 'Não foi possível adicionar o jogo.');
+      const msg = e?.response?.data?.message ?? e?.response?.data?.error ?? e?.message ?? 'Não foi possível adicionar o jogo.';
+      Alert.alert('Erro ao adicionar jogo', String(msg).slice(0, 300));
     },
   });
 
@@ -195,7 +203,8 @@ export default function ListDetailScreen() {
 
   const handleAddGame = (game: any) => {
     addGameMutation.mutate({
-      gameId: String(game.rawg_id ?? game.id),
+      rawgId: String(game.rawg_id ?? game.id),
+      rawgTitle: game.title ?? game.name,
       notes: '',
     });
   };

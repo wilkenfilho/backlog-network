@@ -61,9 +61,9 @@ function TopicCard({ topic, myRole, onPress, onLike, onModerate }: {
   onPress: () => void; onLike: () => void;
   onModerate: (action: string) => void;
 }) {
-  const [liked, setLiked] = useState(topic.is_liked);
-  const [likes, setLikes] = useState(topic.likes_count);
-  const isMod = myRole && ['mod', 'admin', 'owner'].includes(myRole);
+  const [liked, setLiked] = useState(!!topic.is_liked);
+  const [likes, setLikes] = useState(Number(topic.likes_count ?? 0));
+  const isMod = !!(myRole && ['mod', 'admin', 'owner'].includes(myRole));
 
   return (
     <TouchableOpacity style={styles.topicCard} onPress={onPress} activeOpacity={0.85}>
@@ -153,8 +153,8 @@ export default function CommunityScreen() {
 
   const myRole: Role = community?.my_role ?? null;
   const isMember = !!myRole && myRole !== 'banned';
-  const isMod = myRole && ['mod', 'admin', 'owner'].includes(myRole);
-  const isPrivate = community?.is_private === 1 || community?.type === 'private' || community?.type === 'closed';
+  const isMod = !!(myRole && ['mod', 'admin', 'owner'].includes(myRole));
+  const isPrivate = community?.is_private === 1 || community?.is_private === true || community?.type === 'private' || community?.type === 'closed';
 
   const joinMutation = useMutation({
     mutationFn: () => communitiesService.join(communityId),

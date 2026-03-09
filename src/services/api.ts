@@ -86,8 +86,29 @@ export const feedService = {
   },
   async likePost(postId: string) { await api.post(`/posts/${postId}/like`); },
   async unlikePost(postId: string) { await api.delete(`/posts/${postId}/like`); },
-  async getComments(postId: string, page = 1) { return (await api.get(`/posts/${postId}/comments`, { params: { page } })).data; },
-  async addComment(postId: string, text: string, parentId?: string) { return (await api.post(`/posts/${postId}/comments`, { text, body: text, parent_id: parentId ?? null })).data; },
+  async getComments(postId: string, page = 1) {
+    // Tenta /posts/:id/comments, fallback para /comments?post_id=
+    try {
+      return (await api.get(`/posts/${postId}/comments`, { params: { page } })).data;
+    } catch (err: any) {
+      if (err?.response?.status === 404) {
+        return (await api.get('/comments', { params: { post_id: postId, page } })).data;
+      }
+      throw err;
+    }
+  },
+  async addComment(postId: string, text: string, parentId?: string) {
+    const payload = { text, body: text, content: text, post_id: postId, parent_id: parentId ?? null };
+    // Tenta /posts/:id/comments, fallback para /comments
+    try {
+      return (await api.post(`/posts/${postId}/comments`, payload)).data;
+    } catch (err: any) {
+      if (err?.response?.status === 404) {
+        return (await api.post('/comments', payload)).data;
+      }
+      throw err;
+    }
+  },
 };
 
 export const gamesService = {
