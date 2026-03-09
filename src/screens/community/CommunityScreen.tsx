@@ -67,7 +67,7 @@ function TopicCard({ topic, myRole, onPress, onLike, onModerate }: {
 
   return (
     <TouchableOpacity style={styles.topicCard} onPress={onPress} activeOpacity={0.85}>
-      {topic.is_pinned && (
+      {!!topic.is_pinned && (
         <View style={styles.pinnedBadge}><Text style={styles.pinnedText}>📌 FIXADO</Text></View>
       )}
       <View style={styles.topicHeader}>
@@ -76,7 +76,7 @@ function TopicCard({ topic, myRole, onPress, onLike, onModerate }: {
           <Text style={styles.topicAuthor}>{topic.display_name}</Text>
           <Text style={styles.topicTime}>{timeAgo(topic.created_at)}</Text>
         </View>
-        {topic.is_locked && <Text style={{ fontSize: 14 }}>🔒</Text>}
+        {!!topic.is_locked && <Text style={{ fontSize: 14 }}>🔒</Text>}
         {isMod && (
           <TouchableOpacity
             style={styles.modBtn}
@@ -231,7 +231,7 @@ export default function CommunityScreen() {
       <View style={styles.communityInfo}>
         <View style={styles.communityNameRow}>
           <Text style={styles.communityName}>{community.name}</Text>
-          {community.is_verified && <Text style={{ fontSize: 18 }}>✅</Text>}
+          {!!community.is_verified && <Text style={{ fontSize: 18 }}>✅</Text>}
         </View>
 
         <View style={styles.communityStats}>
