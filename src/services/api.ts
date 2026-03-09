@@ -8,7 +8,8 @@ import * as SecureStore from 'expo-secure-store';
 const BASE_URL = 'https://wilkenperez.com/backlog-network-api';
 
 const api: AxiosInstance = axios.create({
-  baseURL: BASE_URL, timeout: 15000,
+  baseURL: BASE_URL,
+  timeout: 15000,
   headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
 });
 
@@ -86,8 +87,8 @@ export const feedService = {
   },
   async likePost(postId: string) { await api.post(`/posts/${postId}/like`); },
   async unlikePost(postId: string) { await api.delete(`/posts/${postId}/like`); },
+  async deletePost(postId: string) { await api.delete(`/posts/${postId}`); },
   async getComments(postId: string, page = 1) {
-    // Tenta /posts/:id/comments, fallback para /comments?post_id=
     try {
       return (await api.get(`/posts/${postId}/comments`, { params: { page } })).data;
     } catch (err: any) {
@@ -99,7 +100,6 @@ export const feedService = {
   },
   async addComment(postId: string, text: string, parentId?: string) {
     const payload = { text, body: text, content: text, post_id: postId, parent_id: parentId ?? null };
-    // Tenta /posts/:id/comments, fallback para /comments
     try {
       return (await api.post(`/posts/${postId}/comments`, payload)).data;
     } catch (err: any) {
@@ -117,10 +117,8 @@ export const gamesService = {
   async getSteamTop() { return api.get('/games/steam-top'); },
   async getGame(gameId: string) { return (await api.get(`/games/${gameId}`)).data; },
   async getReviews(gameId: string, page = 1) { return (await api.get(`/games/${gameId}/reviews`, { params: { page } })).data; },
-  /** Ensures a game exists locally by rawg_id; creates it if needed. Returns the local game object with its UUID. */
   async getOrCreate(rawgId: string | number, title?: string) {
     try {
-      // Most backends expose this as GET /games/by-rawg/:id or POST /games/sync
       const res = await api.post('/games/sync', { rawg_id: rawgId, title }).catch(async () =>
         api.get(`/games/by-rawg/${rawgId}`)
       );
@@ -197,7 +195,6 @@ export const usersService = {
       const res = await api.get(`/users/${userId}/posts`, { params: { page } });
       return res.data;
     } catch (e: any) {
-      // Fallback: filter feed by user
       if (e?.response?.status === 404) {
         const res = await api.get('/feed', { params: { filter: 'global', page } });
         const all = res.data?.data ?? res.data ?? [];
@@ -229,14 +226,13 @@ export const communitiesService = {
     try {
       const res = await api.post('/communities', data);
       const result = res.data;
-      // Some backends return 200 with success:false
       if (result && result.success === false) {
         const msg = result.error ?? result.message ?? 'Erro ao criar comunidade';
         throw new Error(typeof msg === 'object' ? JSON.stringify(msg) : String(msg));
       }
       return result;
     } catch (err: any) {
-      if (err instanceof Error && !(err as any).isAxiosError) throw err; // Re-throw our custom errors
+      if (err instanceof Error && !(err as any).isAxiosError) throw err;
       const d = err?.response?.data;
       const msg = (typeof d === 'string' && d.length < 500 ? d : null)
         ?? d?.error ?? d?.message ?? d?.errors
@@ -281,7 +277,6 @@ export const scrapsService = {
 export const messagesService = {
   async getConversations() { return (await api.get('/messages')).data; },
   async getMessages(withUserId: string, page = 1) {
-    // Try both endpoint patterns since backends vary
     try {
       return (await api.get(`/messages/conversation/${withUserId}`, { params: { page } })).data;
     } catch {
@@ -290,15 +285,10 @@ export const messagesService = {
   },
   async send(toUserId: string, body: string, imageUrl?: string) {
     try {
-      // Nota: NÃO enviamos receiver_id pois causa SQLSTATE 42S22 (coluna inexistente).
-      // Enviamos to_user_id + recipient_id que são os nomes mais comuns nas tabelas messages.
+      // Envia apenas receiver_id (campo esperado pelo backend)
       return (await api.post('/messages', {
-        to_user_id: toUserId,
-        recipient_id: toUserId,
+        receiver_id: toUserId,
         body,
-        message: body,
-        content: body,
-        image_url: imageUrl ?? null,
       })).data;
     } catch (err: any) {
       const d = err?.response?.data;
@@ -309,7 +299,7 @@ export const messagesService = {
     }
   },
   async startConversation(toUserId: string, body: string) {
-    return (await api.post('/messages', { to_user_id: toUserId, body })).data;
+    return (await api.post('/messages', { receiver_id: toUserId, body })).data;
   },
 };
 
@@ -324,7 +314,6 @@ export default api;
 
 export const uploadService = {
   async uploadImage(base64: string) {
-    // Tenta endpoints comuns — backends variam no path de upload
     const endpoints = ['/upload', '/upload/image', '/images/upload', '/media/upload'];
     let lastError: any;
     for (const endpoint of endpoints) {
@@ -334,7 +323,6 @@ export const uploadService = {
           return res.data;
         }
       } catch (err: any) {
-        // 404 = endpoint errado, tenta o próximo; qualquer outro erro para aqui
         if (err?.response?.status !== 404) {
           const d = err?.response?.data;
           const msg = (typeof d === 'string' && d.length < 300 ? d : null)
@@ -344,7 +332,7 @@ export const uploadService = {
         lastError = err;
       }
     }
-    throw new Error(`Endpoint de upload nao encontrado (404). Verifique o backend. Ultimo erro: ${lastError?.message}`);
+    throw new Error(`Endpoint de upload não encontrado (404). Verifique o backend. Último erro: ${lastError?.message}`);
   },
 };
 
@@ -467,7 +455,6 @@ export const steamService = {
   BASE: 'https://api.steampowered.com',
 
   async getTopGames() {
-    // Use SteamSpy for top games list (no CORS), then enrich with Steam store details
     const TOP_APP_IDS = [
       730,      // CS2
       570,      // Dota 2
@@ -522,5 +509,3 @@ export const steamService = {
     return res.data?.appnews?.newsitems ?? [];
   },
 };
-
-

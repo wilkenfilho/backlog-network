@@ -1,8 +1,8 @@
 import React, { useCallback, useRef, useState } from 'react';
 import {
   View, Text, FlatList, StyleSheet, TouchableOpacity, ScrollView,
-  RefreshControl, Animated, Modal, Share, Alert, Image as RNImage,
-  Dimensions, Pressable, ActivityIndicator,
+  RefreshControl, Animated, Modal, Share, Alert, Dimensions,
+  Pressable, ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -15,7 +15,7 @@ import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from '@tansta
 import { Image } from 'expo-image';
 
 import { Colors, Fonts, Spacing, Radius, Shadows } from '../../theme';
-import { Avatar, StatusBadge, GameCover, StarRating, ProgressBar, EmptyState, GlassCard } from '../../components';
+import { Avatar, StatusBadge, GameCover, EmptyState, GlassCard } from '../../components';
 import { feedService, storiesService, uploadService } from '../../services/api';
 import api from '../../services/api';
 import { useAuthStore } from '../../store/authStore';
@@ -25,8 +25,6 @@ import type { Post, GameStatus } from '../../types';
 const { width: SW } = Dimensions.get('window');
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
-
-// Normalize a raw post from any backend shape
 function normalizePost(p: any): Post {
   const u = p.user ?? {};
   return {
@@ -50,7 +48,7 @@ function normalizePost(p: any): Post {
       coverUrl: p.game_cover,
     } : null,
     status: p.status ?? (p.game_id ? 'playing' : undefined),
-    isLiked: !!p.liked_by_me,
+    isLiked: !!p.is_liked,
     likesCount: Number(p.likes_count ?? 0),
     commentsCount: Number(p.comments_count ?? 0),
     sharesCount: 0,
@@ -92,11 +90,10 @@ const PostCard = React.memo(function PostCard({ post, onLike, onComment, onShare
   const [likeCount, setLikeCount] = useState(post.likesCount);
   const scale = useRef(new Animated.Value(1)).current;
 
-  // Sync if server data changes (e.g. after refetch)
   React.useEffect(() => {
     setLiked(post.isLiked ?? false);
     setLikeCount(post.likesCount ?? 0);
-  }, [post.id]);
+  }, [post.id, post.isLiked, post.likesCount]);
 
   const handleLike = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -106,8 +103,8 @@ const PostCard = React.memo(function PostCard({ post, onLike, onComment, onShare
     ]).start();
     const newLiked = !liked;
     setLiked(newLiked);
-    setLikeCount((c: number) => newLiked ? c + 1 : c - 1);
-    onLike(post.id, newLiked); // pass new desired state
+    setLikeCount(c => newLiked ? c + 1 : c - 1);
+    onLike(post.id, newLiked);
   };
 
   const displayName = post.user?.displayName || post.user?.display_name || post.user?.username || 'Usuário';
@@ -191,7 +188,6 @@ function StoriesViewer({ stories, startIdx, onClose }: { stories: any[]; startId
   return (
     <Modal visible animationType="fade" onRequestClose={onClose}>
       <View style={{ flex: 1, backgroundColor: '#000' }}>
-        {/* Progress bar */}
         <View style={[styles.storyProgressRow, { paddingTop: insets.top + 8 }]}>
           {stories.map((_, i) => (
             <View key={i} style={styles.storyProgressTrack}>
@@ -202,7 +198,6 @@ function StoriesViewer({ stories, startIdx, onClose }: { stories: any[]; startId
           ))}
         </View>
 
-        {/* Story user */}
         <View style={styles.storyUserRow}>
           <Avatar user={{ username: story.username, displayName: story.display_name, avatarUrl: story.avatar_url } as any} size={36} />
           <Text style={styles.storyViewerName}>{story.display_name ?? story.username}</Text>
@@ -213,7 +208,6 @@ function StoriesViewer({ stories, startIdx, onClose }: { stories: any[]; startId
           </TouchableOpacity>
         </View>
 
-        {/* Story image */}
         <Pressable style={{ flex: 1 }} onPress={next}>
           <View style={styles.storyTouchSplit}>
             <Pressable style={{ flex: 1 }} onPress={prev} />
@@ -235,7 +229,6 @@ function StoriesViewer({ stories, startIdx, onClose }: { stories: any[]; startId
           )}
         </Pressable>
 
-        {/* Reactions */}
         <View style={[styles.storyBottom, { paddingBottom: insets.bottom + 12 }]}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }} contentContainerStyle={{ gap: 8, paddingHorizontal: 16 }}>
             {['❤️', '🔥', '😂', '😱', '👏', '🎮'].map(emoji => (
@@ -274,7 +267,6 @@ function StoriesRow() {
     },
     select: (res: any) => {
       const arr = res?.data ?? (Array.isArray(res) ? res : []);
-      // Filter to 24h stories only
       const now = Date.now();
       return arr.filter((s: any) => {
         const age = now - new Date(s.created_at).getTime();
@@ -285,15 +277,12 @@ function StoriesRow() {
 
   const uploadMutation = useMutation({
     mutationFn: async (imageUri: string) => {
-      // In React Native, use expo-file-system to read base64, NOT FileReader
       let imageUrl = imageUri;
       try {
         const base64 = await FileSystem.readAsStringAsync(imageUri, { encoding: FileSystem.EncodingType.Base64 });
         const up = await uploadService.uploadImage(base64);
         imageUrl = up?.url ?? up?.image_url ?? imageUri;
-      } catch {
-        // If upload fails, use local URI directly (won't persist but shows for current session)
-      }
+      } catch {}
       return storiesService.createStory({ image_url: imageUrl, duration: 5 });
     },
     onSuccess: () => {
@@ -313,7 +302,6 @@ function StoriesRow() {
     }
   };
 
-  // Group by user
   const grouped = Object.values(
     (storiesData ?? []).reduce((acc: any, s: any) => {
       if (!acc[s.user_id]) acc[s.user_id] = { ...s, stories: [s] };
@@ -333,7 +321,6 @@ function StoriesRow() {
   return (
     <>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.storiesContainer}>
-        {/* Add story button */}
         <TouchableOpacity style={styles.storyItem} activeOpacity={0.8} onPress={handleAddStory}>
           <View style={styles.storyAddRing}>
             {uploadMutation.isPending
@@ -426,31 +413,61 @@ export default function FeedScreen() {
     initialPageParam: 1,
   });
 
-  // Flatten pages into a single list of normalized posts
   const posts = (feedData?.pages ?? []).flatMap((page: any) => {
     const raw = page?.data?.data ?? page?.data ?? [];
     return (Array.isArray(raw) ? raw : []).map(normalizePost);
   });
 
-  const handleLike = useCallback((postId: string, nowLiked: boolean) => {
-    // Fire API call
-    if (nowLiked) {
-      feedService.likePost(postId).catch(() => {
-        queryClient.invalidateQueries({ queryKey: ['feed', activeTab] });
+  // Like mutation com atualização otimista
+  const likeMutation = useMutation({
+    mutationFn: ({ postId, action }: { postId: string; action: 'like' | 'unlike' }) =>
+      action === 'like' ? feedService.likePost(postId) : feedService.unlikePost(postId),
+    onMutate: async ({ postId, action }) => {
+      await queryClient.cancelQueries({ queryKey: ['feed', activeTab] });
+      const previousFeed = queryClient.getQueryData(['feed', activeTab]);
+
+      queryClient.setQueryData(['feed', activeTab], (old: any) => {
+        if (!old) return old;
+        return {
+          ...old,
+          pages: old.pages.map((page: any) => ({
+            ...page,
+            data: page.data.map((post: any) =>
+              post.id === postId
+                ? {
+                    ...post,
+                    liked_by_me: action === 'like',
+                    likes_count: action === 'like' ? post.likes_count + 1 : post.likes_count - 1,
+                  }
+                : post
+            ),
+          })),
+        };
       });
-    } else {
-      feedService.unlikePost(postId).catch(() => {
-        queryClient.invalidateQueries({ queryKey: ['feed', activeTab] });
-      });
-    }
-  }, [activeTab, queryClient]);
+
+      return { previousFeed };
+    },
+    onError: (err, variables, context) => {
+      if (context?.previousFeed) {
+        queryClient.setQueryData(['feed', activeTab], context.previousFeed);
+      }
+      Alert.alert('Erro', 'Não foi possível curtir/descurtir.');
+    },
+  });
+
+  const handleLike = (postId: string, nowLiked: boolean) => {
+    likeMutation.mutate({ postId, action: nowLiked ? 'like' : 'unlike' });
+  };
 
   const handleDeletePost = async () => {
     if (!menuPost) return;
     try {
-      await api.delete(`/posts/${menuPost.id}`);
+      await feedService.deletePost(menuPost.id);
       queryClient.invalidateQueries({ queryKey: ['feed'] });
-    } catch { Alert.alert('Erro', 'Não foi possível excluir.'); }
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (err: any) {
+      Alert.alert('Erro', err?.message || 'Não foi possível excluir.');
+    }
   };
 
   return (
@@ -535,6 +552,7 @@ export default function FeedScreen() {
   );
 }
 
+// ─── STYLES (mantenha os estilos originais do arquivo) ───────────────────────
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.bg },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: Spacing.lg, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: Colors.border },
