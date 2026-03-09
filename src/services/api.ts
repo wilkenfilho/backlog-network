@@ -102,7 +102,17 @@ export const usersService = {
   async getUserBacklog(userId: string, status?: string) { return (await api.get(`/users/${userId}/backlog`, { params: status ? { status } : {} })).data; },
   async follow(userId: string) { await api.post(`/users/${userId}/follow`); },
   async unfollow(userId: string) { await api.delete(`/users/${userId}/follow`); },
-  async getSuggested() { return api.get('/users/suggested'); },
+  async getSuggested() {
+    try {
+      const res = await api.get('/users/suggested');
+      const data = res.data?.data ?? res.data ?? [];
+      if (Array.isArray(data) && data.length > 0) return res;
+      // fallback: search all users
+      return api.get('/users/search', { params: { q: '' } });
+    } catch {
+      return api.get('/users/search', { params: { q: '' } });
+    }
+  },
   async search(q: string) { return (await api.get('/users/search', { params: { q } })).data; },
   async updateProfile(data: object) { return (await api.patch('/users/me', data)).data; },
   async getPrivacy() { return (await api.get('/users/me/privacy')).data; },
@@ -191,11 +201,8 @@ export const rawgService = {
   RAWG_KEY: '089962d8173c4418813243d5de18e7eb',
   BASE: 'https://api.rawg.io/api',
 
-  async search(q: string) {
-    const res = await axios.get(`${rawgService.BASE}/games`, {
-      params: { key: rawgService.RAWG_KEY, search: q, page_size: 20 },
-    });
-    return (res.data.results ?? []).map((g: any) => ({
+  _map(g: any) {
+    return {
       id: String(g.id),
       title: g.name,
       developer: g.developers?.[0]?.name ?? '',
@@ -204,34 +211,44 @@ export const rawgService = {
       rating: g.rating,
       rawg_rating: g.rating,
       genres: g.genres?.map((x: any) => x.name) ?? [],
-      platforms: g.platforms?.map((x: any) => x.platform.name) ?? [],
+      platforms: g.platforms?.map((x: any) => x.platform?.name ?? x.name) ?? [],
       released: g.released,
       rawg_id: g.id,
-    }));
+      metacritic: g.metacritic,
+      description: g.description_raw ?? '',
+    };
   },
 
-  async getTrending() {
+  async search(q: string, page = 1) {
+    const res = await axios.get(`${rawgService.BASE}/games`, {
+      params: { key: rawgService.RAWG_KEY, search: q, page_size: 40, page },
+    });
+    return (res.data.results ?? []).map(rawgService._map);
+  },
+
+  async getTrending(page = 1) {
     const res = await axios.get(`${rawgService.BASE}/games`, {
       params: {
         key: rawgService.RAWG_KEY,
         ordering: '-added',
-        page_size: 20,
-        dates: `${new Date().getFullYear() - 1}-01-01,${new Date().toISOString().split('T')[0]}`,
+        page_size: 40,
+        page,
       },
     });
-    return (res.data.results ?? []).map((g: any) => ({
-      id: String(g.id),
-      title: g.name,
-      developer: g.developers?.[0]?.name ?? '',
-      coverUrl: g.background_image,
-      cover_url: g.background_image,
-      rating: g.rating,
-      rawg_rating: g.rating,
-      genres: g.genres?.map((x: any) => x.name) ?? [],
-      platforms: g.platforms?.map((x: any) => x.platform.name) ?? [],
-      released: g.released,
-      rawg_id: g.id,
-    }));
+    return (res.data.results ?? []).map(rawgService._map);
+  },
+
+  async getByGenre(genre: string, page = 1) {
+    const res = await axios.get(`${rawgService.BASE}/games`, {
+      params: {
+        key: rawgService.RAWG_KEY,
+        genres: genre.toLowerCase(),
+        ordering: '-rating',
+        page_size: 40,
+        page,
+      },
+    });
+    return (res.data.results ?? []).map(rawgService._map);
   },
 
   async getGame(rawgId: string) {
@@ -250,7 +267,7 @@ export const rawgService = {
       rawg_rating: g.rating,
       description: g.description_raw ?? g.description ?? '',
       genres: g.genres?.map((x: any) => x.name) ?? [],
-      platforms: g.platforms?.map((x: any) => x.platform.name) ?? [],
+      platforms: g.platforms?.map((x: any) => x.platform?.name ?? x.name) ?? [],
       released: g.released,
       metacritic: g.metacritic,
       rawg_id: g.id,
@@ -258,4 +275,66 @@ export const rawgService = {
     };
   },
 };
+
+export const steamService = {
+  STEAM_KEY: 'C240898DA51E2DC8D587EA61A4E47A7C',
+  BASE: 'https://api.steampowered.com',
+
+  async getTopGames() {
+    // Use SteamSpy for top games list (no CORS), then enrich with Steam store details
+    const TOP_APP_IDS = [
+      730,      // CS2
+      570,      // Dota 2
+      1091500,  // Cyberpunk 2077
+      1245620,  // Elden Ring
+      1716740,  // DAVE THE DIVER
+      1888160,  // They Always Run
+      2358720,  // Black Myth: Wukong
+      2767030,  // Hades II
+      1203220,  // NARAKA: BLADEPOINT
+      578080,   // PUBG
+      1172470,  // Apex Legends
+      252490,   // Rust
+      440,      // Team Fortress 2
+      550,      // Left 4 Dead 2
+      359550,   // Rainbow Six Siege
+      1086940,  // Baldur's Gate 3
+      1151640,  // Fallout 76
+      271590,   // GTA V
+      381210,   // Dead by Daylight
+      1623730,  // Palworld
+    ];
+    const results = await Promise.allSettled(
+      TOP_APP_IDS.map(id =>
+        axios.get(`https://store.steampowered.com/api/appdetails?appids=${id}&cc=br&l=portuguese`, { timeout: 8000 })
+          .then(r => {
+            const d = r.data?.[id]?.data;
+            if (!d) return null;
+            return {
+              steam_id: id,
+              id: String(id),
+              title: d.name,
+              cover_url: d.header_image,
+              price: d.is_free ? 'Grátis' : d.price_overview?.final_formatted ?? '',
+              description: d.short_description ?? '',
+              genres: d.genres?.map((g: any) => g.description) ?? [],
+              developers: d.developers ?? [],
+              release_date: d.release_date?.date ?? '',
+            };
+          }).catch(() => null)
+      )
+    );
+    return results
+      .filter(r => r.status === 'fulfilled' && r.value)
+      .map((r: any) => r.value);
+  },
+
+  async getNewsForApp(appId: number) {
+    const res = await axios.get(
+      `${steamService.BASE}/ISteamNews/GetNewsForApp/v0002/?appid=${appId}&count=5&maxlength=300`
+    );
+    return res.data?.appnews?.newsitems ?? [];
+  },
+};
+
 

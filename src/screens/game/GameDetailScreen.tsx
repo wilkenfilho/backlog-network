@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useMemo } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   Dimensions, Animated,
@@ -13,6 +13,8 @@ import * as Haptics from 'expo-haptics';
 import { Colors, Fonts, Spacing, Radius, Shadows } from '../../theme';
 import { Button, StarRating, GameCover, Avatar, ProgressBar, EmptyState, StatusBadge } from '../../components';
 import type { Game, Review, GameStatus } from '../../types';
+import { rawgService, reviewsService } from '../../services/api';
+import { useQuery } from '@tanstack/react-query';
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 
@@ -123,7 +125,49 @@ export default function GameDetailScreen() {
   const [myStatus, setMyStatus] = useState<GameStatus | undefined>(undefined);
   const [activeTab, setActiveTab] = useState<'overview' | 'reviews' | 'lists'>('overview');
 
-  const game = MOCK_GAME;
+  const route = useRoute<any>();
+  const routeGame = route.params?.game;
+  const gameId = route.params?.gameId ?? routeGame?.rawg_id ?? routeGame?.id;
+
+  // Fetch full game details from RAWG if we have an ID
+  const { data: rawgGame } = useQuery({
+    queryKey: ['game-detail', gameId],
+    queryFn: () => rawgService.getGame(String(gameId)),
+    enabled: !!gameId,
+  });
+
+  // Fetch reviews from backend
+  const { data: reviewsData } = useQuery({
+    queryKey: ['game-reviews', gameId],
+    queryFn: () => reviewsService.getMyReviews(),
+    select: (res: any) => {
+      const raw = res.data?.data ?? res.data ?? [];
+      return Array.isArray(raw) ? raw : [];
+    },
+    enabled: !!gameId,
+  });
+
+  // Merge route params with RAWG data (RAWG takes priority for description/details)
+  const game = useMemo(() => {
+    const base = routeGame ?? {};
+    if (!rawgGame) return base;
+    return {
+      ...base,
+      ...rawgGame,
+      id: base.id ?? rawgGame.id,
+      title: rawgGame.title ?? base.title,
+      developer: rawgGame.developer ?? base.developer,
+      publisher: rawgGame.publisher ?? base.publisher,
+      description: rawgGame.description ?? base.description,
+      genres: rawgGame.genres?.length ? rawgGame.genres : (base.genres ?? []),
+      platforms: rawgGame.platforms?.length ? rawgGame.platforms : (base.platforms ?? []),
+      coverUrl: rawgGame.coverUrl ?? base.coverUrl,
+      rating: rawgGame.metacritic ?? rawgGame.rating ?? base.rating,
+      releaseDate: rawgGame.released ?? base.releaseDate,
+    };
+  }, [routeGame, rawgGame]);
+
+  const reviews = reviewsData ?? [];
 
   const headerOpacity = scrollY.interpolate({
     inputRange: [200, 260],

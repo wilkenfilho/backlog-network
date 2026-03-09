@@ -76,13 +76,23 @@ export default function CreateCommunityScreen() {
       return;
     }
 
+    const slug = name.trim().toLowerCase()
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9\s-]/g, '')
+      .trim().replace(/\s+/g, '-')
+      .replace(/-+/g, '-');
+
     const payload: any = {
       name: name.trim(),
+      slug,
       description: description.trim(),
-      genre: genre || null,
+      genre: genre || '',
       icon: icon || '🎮',
       is_private: isPrivate ? 1 : 0,
+      type: isPrivate ? 'private' : 'public',
       privacy: isPrivate ? 'private' : 'public',
+      banner_url: '',
+      cover_url: '',
     };
 
     if (linkedGame) {
