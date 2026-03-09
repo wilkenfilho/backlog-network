@@ -106,16 +106,18 @@ const AVATAR_GRADIENTS = [
   ['#ff5c5c', '#7b61ff'],
 ] as const;
 
-export function Avatar({ user, size = 40, onPress }: { user: Partial<User>; size?: number; onPress?: () => void }) {
-  const initials = (user.displayName ?? user.username ?? '?').slice(0, 2).toUpperCase();
+export function Avatar({ user, size = 40, onPress }: { user: Partial<User> & { avatarUrl?: string; avatar_url?: string; display_name?: string }; size?: number; onPress?: () => void }) {
+  const displayName = (user as any).displayName ?? (user as any).display_name ?? user.username ?? '';
+  const initials = displayName ? displayName.slice(0, 2).toUpperCase() : (user.username ?? '').slice(0, 2).toUpperCase() || '?';
   const gradientIdx = (user.id?.charCodeAt(0) ?? 0) % AVATAR_GRADIENTS.length;
   const borderRadius = size * 0.28;
+  const avatarUri = user.avatar ?? (user as any).avatarUrl ?? (user as any).avatar_url;
 
-  if (user.avatar) {
+  if (avatarUri) {
     return (
       <TouchableOpacity onPress={onPress} activeOpacity={0.8} disabled={!onPress}>
         <Image
-          source={{ uri: user.avatar }}
+          source={{ uri: avatarUri }}
           style={{ width: size, height: size, borderRadius }}
           contentFit="cover"
           transition={200}

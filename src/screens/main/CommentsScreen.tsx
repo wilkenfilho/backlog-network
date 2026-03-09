@@ -309,7 +309,10 @@ export default function CommentsScreen() {
           onChangeText={setCommentText}
           placeholder={replyingTo ? `Responder ${replyingTo.display_name || replyingTo.username}...` : 'Escrever comentário...'}
           placeholderTextColor={Colors.muted}
-          multiline
+          multiline={false}
+          returnKeyType="send"
+          onSubmitEditing={handleSubmit}
+          blurOnSubmit={false}
           maxLength={1000}
         />
         <TouchableOpacity

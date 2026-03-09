@@ -12,7 +12,7 @@ import * as Haptics from 'expo-haptics';
 import { useQuery } from '@tanstack/react-query';
 import { Colors, Fonts, Spacing, Radius, Shadows } from '../../theme';
 import { EmptyState } from '../../components';
-import { gamesService, usersService, communitiesService } from '../../services/api';
+import { gamesService, usersService, communitiesService, rawgService } from '../../services/api';
 
 type Tab = 'games' | 'twitch' | 'steam' | 'communities' | 'users';
 
@@ -89,21 +89,15 @@ export default function ExploreScreen() {
   // ─── QUERIES ──────────────────────────────────────────────────────────────
   const { data: trendingGames, isLoading: trendingLoading, refetch: refetchTrending } = useQuery({
     queryKey: ['games-trending'],
-    queryFn: () => gamesService.getTrending(),
-    select: (res: any) => {
-      const raw = res.data?.data ?? res.data ?? res ?? [];
-      return Array.isArray(raw) ? raw : [];
-    },
+    queryFn: () => rawgService.getTrending(),
+    select: (raw: any) => Array.isArray(raw) ? raw : [],
     enabled: activeTab === 'games',
   });
 
   const { data: searchResults, isLoading: searchLoading, isFetching: searchFetching } = useQuery({
     queryKey: ['games-search', debouncedSearch],
-    queryFn: () => gamesService.search(debouncedSearch),
-    select: (res: any) => {
-      const raw = res.data?.data ?? res.data ?? res ?? [];
-      return Array.isArray(raw) ? raw : [];
-    },
+    queryFn: () => rawgService.search(debouncedSearch),
+    select: (raw: any) => Array.isArray(raw) ? raw : [],
     enabled: debouncedSearch.length >= 2 && activeTab === 'games',
   });
 

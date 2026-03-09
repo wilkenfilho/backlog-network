@@ -339,6 +339,9 @@ export default function FeedScreen() {
       <BlurView intensity={60} tint="dark" style={styles.header}>
         <Text style={styles.headerTitle}>FEED</Text>
         <View style={styles.headerRight}>
+          <TouchableOpacity style={styles.headerBtn} onPress={() => navigation.navigate('Messages')}>
+            <Text style={{ fontSize: 20 }}>💬</Text>
+          </TouchableOpacity>
           <TouchableOpacity style={styles.headerBtn} onPress={() => navigation.navigate('Notifications')}>
             <Text style={{ fontSize: 20 }}>🔔</Text><View style={styles.notifDot} />
           </TouchableOpacity>

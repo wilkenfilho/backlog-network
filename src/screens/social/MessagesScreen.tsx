@@ -1,15 +1,18 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
-  TextInput, KeyboardAvoidingView, Platform, Animated,
+  TextInput, KeyboardAvoidingView, Platform, Modal, Pressable,
+  ActivityIndicator, Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import * as Haptics from 'expo-haptics';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 import { Colors, Fonts, Spacing, Radius, Shadows } from '../../theme';
 import { Avatar, EmptyState } from '../../components';
 import { useAuthStore } from '../../store/authStore';
+import { messagesService, usersService } from '../../services/api';
 
 // ─── TYPES ───────────────────────────────────────────────────────────────────
 interface Conversation {
@@ -21,7 +24,6 @@ interface Conversation {
 interface Message {
   id: string; sender_id: string; body: string;
   is_read: boolean; created_at: string;
-  username?: string; display_name?: string; avatar_url?: string;
 }
 
 interface Scrap {
@@ -29,27 +31,6 @@ interface Scrap {
   from_name: string; from_avatar?: string;
   body: string; is_private: boolean; created_at: string;
 }
-
-// ─── MOCK DATA ────────────────────────────────────────────────────────────────
-const MOCK_CONVS: Conversation[] = [
-  { id: 'cv1', other_id: 'u1', other_username: 'mari_rpg', other_name: 'Mari RPG', last_message: 'Você tentou a build de arcane?', last_message_at: new Date(Date.now() - 300000).toISOString(), unread_count: 2 },
-  { id: 'cv2', other_id: 'u2', other_username: 'luca.dev', other_name: 'Luca', last_message: 'Mano, que boss difícil kkk', last_message_at: new Date(Date.now() - 3600000).toISOString(), unread_count: 0 },
-  { id: 'cv3', other_id: 'u3', other_username: 'rodrigao', other_name: 'Rodrigão', last_message: 'Top demais essa comunidade!', last_message_at: new Date(Date.now() - 86400000).toISOString(), unread_count: 0 },
-];
-
-const MOCK_MESSAGES: Message[] = [
-  { id: 'm1', sender_id: 'u1', body: 'Oi! Vi que você zerou o Elden Ring 🔥', is_read: true, created_at: new Date(Date.now() - 600000).toISOString() },
-  { id: 'm2', sender_id: 'me', body: 'Sim! Demorei mas consegui haha', is_read: true, created_at: new Date(Date.now() - 540000).toISOString() },
-  { id: 'm3', sender_id: 'u1', body: 'Qual foi sua build final?', is_read: true, created_at: new Date(Date.now() - 480000).toISOString() },
-  { id: 'm4', sender_id: 'me', body: 'Strength com Greatsword of Solitude, simples mas funciona', is_read: true, created_at: new Date(Date.now() - 420000).toISOString() },
-  { id: 'm5', sender_id: 'u1', body: 'Você tentou a build de arcane?', is_read: false, created_at: new Date(Date.now() - 300000).toISOString() },
-];
-
-const MOCK_SCRAPS: Scrap[] = [
-  { id: 's1', from_user_id: 'u1', from_username: 'mari_rpg', from_name: 'Mari RPG', body: 'Parabéns por zerar o Elden Ring! Você é incrível 🎉', is_private: false, created_at: new Date(Date.now() - 3600000).toISOString() },
-  { id: 's2', from_user_id: 'u2', from_username: 'luca.dev', from_name: 'Luca', body: 'Cara, sua review do BG3 foi top demais. Concordo com tudo!', is_private: false, created_at: new Date(Date.now() - 86400000).toISOString() },
-  { id: 's3', from_user_id: 'u3', from_username: 'rodrigao', from_name: 'Rodrigão', body: 'Oi! Posso te adicionar como fã? Adoro seus posts de review 👾', is_private: false, created_at: new Date(Date.now() - 172800000).toISOString() },
-];
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 function timeAgo(d: string): string {
@@ -65,12 +46,12 @@ function ConversationItem({ conv, onPress }: { conv: Conversation; onPress: () =
   return (
     <TouchableOpacity style={styles.convItem} onPress={onPress} activeOpacity={0.8}>
       <View style={{ position: 'relative' }}>
-        <Avatar user={{ id: conv.other_id, username: conv.other_username, displayName: conv.other_name } as any} size={48} />
+        <Avatar user={{ id: conv.other_id, username: conv.other_username, displayName: conv.other_name, avatar: conv.other_avatar } as any} size={48} />
         <View style={styles.onlineDot} />
       </View>
       <View style={styles.convInfo}>
         <View style={styles.convHeader}>
-          <Text style={styles.convName}>{conv.other_name}</Text>
+          <Text style={styles.convName}>{conv.other_name || conv.other_username}</Text>
           <Text style={styles.convTime}>{timeAgo(conv.last_message_at)}</Text>
         </View>
         <View style={styles.convPreview}>
@@ -88,37 +69,155 @@ function ConversationItem({ conv, onPress }: { conv: Conversation; onPress: () =
   );
 }
 
+// ─── NEW MESSAGE MODAL ────────────────────────────────────────────────────────
+function NewMessageModal({ visible, onClose, onSelectUser }: { visible: boolean; onClose: () => void; onSelectUser: (user: any) => void }) {
+  const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 400);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  const { data: results, isLoading } = useQuery({
+    queryKey: ['user-search-msg', debouncedSearch],
+    queryFn: () => usersService.search(debouncedSearch),
+    select: (res: any) => {
+      const raw = res?.data?.data ?? res?.data ?? res ?? [];
+      return Array.isArray(raw) ? raw : [];
+    },
+    enabled: debouncedSearch.length >= 2,
+  });
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalSheet}>
+          <View style={styles.modalHandle} />
+          <Text style={styles.modalTitle}>Nova Mensagem</Text>
+          <View style={styles.modalSearchRow}>
+            <Text style={{ color: Colors.muted }}>🔍</Text>
+            <TextInput
+              style={styles.modalSearchInput}
+              value={search}
+              onChangeText={setSearch}
+              placeholder="Buscar usuário..."
+              placeholderTextColor={Colors.muted}
+              autoFocus
+            />
+            {isLoading && <ActivityIndicator color={Colors.accent} size="small" />}
+          </View>
+          {debouncedSearch.length >= 2 && (results ?? []).length === 0 && !isLoading && (
+            <Text style={styles.modalEmpty}>Nenhum usuário encontrado</Text>
+          )}
+          <FlatList
+            data={results ?? []}
+            keyExtractor={(item: any) => String(item.id ?? item.user_id)}
+            renderItem={({ item }: any) => (
+              <TouchableOpacity
+                style={styles.modalUserItem}
+                onPress={() => { onSelectUser(item); onClose(); setSearch(''); }}
+                activeOpacity={0.8}
+              >
+                <Avatar user={{ id: String(item.id), username: item.username, displayName: item.display_name, avatar: item.avatar_url } as any} size={40} />
+                <View>
+                  <Text style={styles.modalUserName}>{item.display_name ?? item.username}</Text>
+                  <Text style={styles.modalUserHandle}>@{item.username}</Text>
+                </View>
+              </TouchableOpacity>
+            )}
+            style={{ maxHeight: 300 }}
+          />
+          <TouchableOpacity style={styles.modalCancelBtn} onPress={onClose}>
+            <Text style={styles.modalCancelText}>Cancelar</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 // ─── MESSAGES SCREEN ──────────────────────────────────────────────────────────
 export function MessagesScreen() {
   const insets = useSafeAreaInsets();
-  const navigation = useNavigation<any>();
+  const { user } = useAuthStore();
   const [activeConv, setActiveConv] = useState<Conversation | null>(null);
+  const [newMsgVisible, setNewMsgVisible] = useState(false);
+  const queryClient = useQueryClient();
+
+  const { data: conversations, isLoading, refetch } = useQuery({
+    queryKey: ['conversations'],
+    queryFn: () => messagesService.getConversations(),
+    select: (res: any) => {
+      const raw = res?.data ?? res ?? [];
+      return Array.isArray(raw) ? raw.map((c: any) => ({
+        id: String(c.id ?? c.conversation_id),
+        other_id: String(c.other_user_id ?? c.other_id),
+        other_username: c.other_username ?? '',
+        other_name: c.other_display_name ?? c.other_name ?? c.other_username ?? '',
+        other_avatar: c.other_avatar_url ?? c.other_avatar,
+        last_message: c.last_message ?? c.last_body ?? '',
+        last_message_at: c.last_message_at ?? c.updated_at ?? new Date().toISOString(),
+        unread_count: Number(c.unread_count ?? 0),
+      })) : [];
+    },
+  });
+
+  const handleSelectUser = async (selectedUser: any) => {
+    // Start a new conversation with this user
+    const convId = String(selectedUser.id ?? selectedUser.user_id);
+    const newConv: Conversation = {
+      id: convId,
+      other_id: convId,
+      other_username: selectedUser.username,
+      other_name: selectedUser.display_name ?? selectedUser.username,
+      other_avatar: selectedUser.avatar_url,
+      last_message: '',
+      last_message_at: new Date().toISOString(),
+      unread_count: 0,
+    };
+    setActiveConv(newConv);
+  };
 
   if (activeConv) {
-    return <ChatScreen conv={activeConv} onBack={() => setActiveConv(null)} />;
+    return <ChatScreen conv={activeConv} onBack={() => { setActiveConv(null); queryClient.invalidateQueries({ queryKey: ['conversations'] }); }} />;
   }
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>MENSAGENS</Text>
-        <TouchableOpacity style={styles.headerBtn}>
+        <TouchableOpacity style={styles.headerBtn} onPress={() => setNewMsgVisible(true)}>
           <Text style={{ fontSize: 20 }}>✏️</Text>
         </TouchableOpacity>
       </View>
 
-      <FlatList
-        data={MOCK_CONVS}
-        keyExtractor={item => item.id}
-        renderItem={({ item }) => (
-          <ConversationItem conv={item} onPress={() => setActiveConv(item)} />
-        )}
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 100 }}
-        ItemSeparatorComponent={() => <View style={{ height: 1, backgroundColor: Colors.border, marginLeft: 76 }} />}
-        ListEmptyComponent={() => (
-          <EmptyState emoji="💬" title="Sem mensagens" subtitle="Encontre alguém e mande uma mensagem!" />
-        )}
+      {isLoading ? (
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+          <ActivityIndicator color={Colors.accent} size="large" />
+        </View>
+      ) : (
+        <FlatList
+          data={conversations ?? []}
+          keyExtractor={item => item.id}
+          renderItem={({ item }) => (
+            <ConversationItem conv={item} onPress={() => setActiveConv(item)} />
+          )}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={{ paddingBottom: 100 }}
+          ItemSeparatorComponent={() => <View style={{ height: 1, backgroundColor: Colors.border, marginLeft: 76 }} />}
+          ListEmptyComponent={() => (
+            <EmptyState emoji="💬" title="Sem mensagens" subtitle="Toque no ✏️ para iniciar uma conversa!" />
+          )}
+          onRefresh={refetch}
+          refreshing={false}
+        />
+      )}
+
+      <NewMessageModal
+        visible={newMsgVisible}
+        onClose={() => setNewMsgVisible(false)}
+        onSelectUser={handleSelectUser}
       />
     </View>
   );
@@ -128,33 +227,52 @@ export function MessagesScreen() {
 function ChatScreen({ conv, onBack }: { conv: Conversation; onBack: () => void }) {
   const insets = useSafeAreaInsets();
   const { user } = useAuthStore();
-  const [messages, setMessages] = useState<Message[]>(MOCK_MESSAGES);
   const [text, setText] = useState('');
   const listRef = useRef<FlatList>(null);
+  const queryClient = useQueryClient();
+
+  const { data: messages, isLoading } = useQuery({
+    queryKey: ['messages', conv.id],
+    queryFn: () => messagesService.getMessages(conv.id),
+    select: (res: any) => {
+      const raw = res?.data ?? res ?? [];
+      return Array.isArray(raw) ? raw.map((m: any) => ({
+        id: String(m.id),
+        sender_id: String(m.sender_id ?? m.from_user_id),
+        body: m.body ?? m.text ?? '',
+        is_read: !!m.is_read,
+        created_at: m.created_at ?? new Date().toISOString(),
+      })) : [];
+    },
+    refetchInterval: 5000,
+  });
+
+  const sendMutation = useMutation({
+    mutationFn: (body: string) => messagesService.send(conv.other_id, body),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['messages', conv.id] });
+      queryClient.invalidateQueries({ queryKey: ['conversations'] });
+      setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
+    },
+    onError: () => Alert.alert('Erro', 'Não foi possível enviar a mensagem.'),
+  });
 
   const sendMessage = () => {
     if (!text.trim()) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    const newMsg: Message = {
-      id: Math.random().toString(),
-      sender_id: 'me',
-      body: text.trim(),
-      is_read: false,
-      created_at: new Date().toISOString(),
-    };
-    setMessages(prev => [...prev, newMsg]);
+    sendMutation.mutate(text.trim());
     setText('');
-    setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
   };
 
   const renderMsg = ({ item, index }: { item: Message; index: number }) => {
-    const isMe = item.sender_id === 'me';
-    const prevItem = messages[index - 1];
-    const showAvatar = !isMe && (!prevItem || prevItem.sender_id === 'me');
+    const isMe = String(item.sender_id) === String((user as any)?.id);
+    const allMessages = messages ?? [];
+    const prevItem = allMessages[index - 1];
+    const showAvatar = !isMe && (!prevItem || String(prevItem.sender_id) === String((user as any)?.id));
     return (
       <View style={[styles.msgRow, isMe && styles.msgRowMe]}>
         {!isMe && showAvatar
-          ? <Avatar user={{ id: conv.other_id, username: conv.other_username, displayName: conv.other_name } as any} size={28} />
+          ? <Avatar user={{ id: conv.other_id, username: conv.other_username, displayName: conv.other_name, avatar: conv.other_avatar } as any} size={28} />
           : !isMe && <View style={{ width: 28 }} />
         }
         <View style={[styles.msgBubble, isMe && styles.msgBubbleMe]}>
@@ -171,14 +289,13 @@ function ChatScreen({ conv, onBack }: { conv: Conversation; onBack: () => void }
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={0}
     >
-      {/* Chat header */}
       <View style={styles.chatHeader}>
         <TouchableOpacity onPress={onBack} style={styles.headerBtn}>
           <Text style={{ color: Colors.text, fontSize: 20 }}>←</Text>
         </TouchableOpacity>
-        <Avatar user={{ id: conv.other_id, username: conv.other_username, displayName: conv.other_name } as any} size={36} />
+        <Avatar user={{ id: conv.other_id, username: conv.other_username, displayName: conv.other_name, avatar: conv.other_avatar } as any} size={36} />
         <View style={{ flex: 1 }}>
-          <Text style={styles.chatHeaderName}>{conv.other_name}</Text>
+          <Text style={styles.chatHeaderName}>{conv.other_name || conv.other_username}</Text>
           <Text style={styles.chatHeaderStatus}>@{conv.other_username}</Text>
         </View>
         <TouchableOpacity style={styles.headerBtn}>
@@ -186,18 +303,28 @@ function ChatScreen({ conv, onBack }: { conv: Conversation; onBack: () => void }
         </TouchableOpacity>
       </View>
 
-      {/* Messages */}
-      <FlatList
-        ref={listRef}
-        data={messages}
-        keyExtractor={item => item.id}
-        renderItem={renderMsg}
-        contentContainerStyle={styles.chatList}
-        showsVerticalScrollIndicator={false}
-        onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
-      />
+      {isLoading ? (
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+          <ActivityIndicator color={Colors.accent} />
+        </View>
+      ) : (
+        <FlatList
+          ref={listRef}
+          data={messages ?? []}
+          keyExtractor={item => item.id}
+          renderItem={renderMsg}
+          contentContainerStyle={styles.chatList}
+          showsVerticalScrollIndicator={false}
+          onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
+          ListEmptyComponent={() => (
+            <View style={{ alignItems: 'center', paddingVertical: 40 }}>
+              <Text style={{ fontSize: 40, marginBottom: 12 }}>💬</Text>
+              <Text style={{ fontFamily: Fonts.body, color: Colors.muted, fontSize: 14 }}>Comece a conversa!</Text>
+            </View>
+          )}
+        />
+      )}
 
-      {/* Input */}
       <View style={[styles.chatInput, { paddingBottom: insets.bottom + 8 }]}>
         <TextInput
           style={styles.chatInputField}
@@ -207,18 +334,24 @@ function ChatScreen({ conv, onBack }: { conv: Conversation; onBack: () => void }
           placeholderTextColor={Colors.muted}
           multiline
           maxLength={1000}
+          returnKeyType="send"
+          onSubmitEditing={sendMessage}
         />
         <TouchableOpacity
-          style={[styles.sendBtn, !text.trim() && styles.sendBtnDisabled]}
+          style={[styles.sendBtn, (!text.trim() || sendMutation.isPending) && styles.sendBtnDisabled]}
           onPress={sendMessage}
-          disabled={!text.trim()}
+          disabled={!text.trim() || sendMutation.isPending}
         >
-          <Text style={{ fontSize: 18 }}>↑</Text>
+          {sendMutation.isPending
+            ? <ActivityIndicator color="#0a0a0f" size="small" />
+            : <Text style={{ fontSize: 18, color: '#0a0a0f' }}>↑</Text>
+          }
         </TouchableOpacity>
       </View>
     </KeyboardAvoidingView>
   );
 }
+
 
 // ─── SCRAPS SECTION (para usar dentro do ProfileScreen) ──────────────────────
 export function ScrapsSection({ userId, isMyProfile }: { userId: string; isMyProfile: boolean }) {
@@ -423,7 +556,21 @@ const styles = StyleSheet.create({
   sendBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: Colors.accent, alignItems: 'center', justifyContent: 'center' },
   sendBtnDisabled: { opacity: 0.4 },
 
-  // Scraps
+  // Modal
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end' },
+  modalSheet: { backgroundColor: Colors.surface, borderTopLeftRadius: Radius.xxl, borderTopRightRadius: Radius.xxl, paddingHorizontal: Spacing.lg, paddingBottom: 40, paddingTop: Spacing.md },
+  modalHandle: { width: 36, height: 4, borderRadius: 2, backgroundColor: Colors.border, alignSelf: 'center', marginBottom: 20 },
+  modalTitle: { fontFamily: Fonts.display, fontSize: 18, letterSpacing: 2, color: Colors.text, marginBottom: Spacing.md },
+  modalSearchRow: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: Colors.bg, borderRadius: Radius.lg, paddingHorizontal: 14, paddingVertical: 10, borderWidth: 1, borderColor: Colors.border, marginBottom: Spacing.md },
+  modalSearchInput: { flex: 1, fontFamily: Fonts.body, fontSize: 14, color: Colors.text },
+  modalEmpty: { fontFamily: Fonts.mono, fontSize: 12, color: Colors.muted, textAlign: 'center', paddingVertical: Spacing.md },
+  modalUserItem: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: Colors.border },
+  modalUserName: { fontFamily: Fonts.bodyBold, fontSize: 14, color: Colors.text },
+  modalUserHandle: { fontFamily: Fonts.mono, fontSize: 11, color: Colors.muted },
+  modalCancelBtn: { marginTop: Spacing.lg, paddingVertical: 14, alignItems: 'center', backgroundColor: Colors.bg, borderRadius: Radius.lg },
+  modalCancelText: { fontFamily: Fonts.bodyBold, fontSize: 15, color: Colors.muted },
+
+
   scrapsSection: { paddingVertical: Spacing.lg },
   scrapsHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: Spacing.md },
   scrapsTitle: { fontFamily: Fonts.monoBold, fontSize: 13, color: Colors.text },

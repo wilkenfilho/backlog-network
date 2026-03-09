@@ -10,7 +10,7 @@ import { Image } from 'expo-image';
 import * as Haptics from 'expo-haptics';
 import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query';
 import { Colors, Fonts, Spacing, Radius } from '../../theme';
-import { communitiesService, gamesService } from '../../services/api';
+import { communitiesService, gamesService, rawgService } from '../../services/api';
 
 const GENRES = ['RPG', 'Action', 'Indie', 'Roguelike', 'Platformer', 'Soulsborne', 'Strategy', 'Horror', 'Puzzle', 'Sports', 'FPS', 'Racing'];
 const ICONS  = ['🎮', '⚔️', '🏹', '🧙', '🤖', '👾', '🎲', '🌍', '🔫', '🏎️', '⚽', '🧩'];
@@ -43,9 +43,8 @@ export default function CreateCommunityScreen() {
 
   const { data: gameResults, isFetching: gamesFetching } = useQuery({
     queryKey: ['game-search-community', debouncedGameSearch],
-    queryFn: () => gamesService.search(debouncedGameSearch),
-    select: (res: any) => {
-      const raw = res.data?.data ?? res.data ?? res ?? [];
+    queryFn: () => rawgService.search(debouncedGameSearch),
+    select: (raw: any) => {
       return Array.isArray(raw) ? raw.slice(0, 5) : [];
     },
     enabled: debouncedGameSearch.length >= 2 && !linkedGame,
@@ -80,9 +79,10 @@ export default function CreateCommunityScreen() {
     const payload: any = {
       name: name.trim(),
       description: description.trim(),
-      genre,
-      icon,
-      is_private: isPrivate,
+      genre: genre || null,
+      icon: icon || '🎮',
+      is_private: isPrivate ? 1 : 0,
+      privacy: isPrivate ? 'private' : 'public',
     };
 
     if (linkedGame) {
