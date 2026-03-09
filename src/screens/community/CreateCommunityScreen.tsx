@@ -8,12 +8,16 @@ import { useNavigation } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Image } from 'expo-image';
 import * as Haptics from 'expo-haptics';
+import * as ImagePicker from 'expo-image-picker';
+import * as FileSystem from 'expo-file-system';
+import * as ImageManipulator from 'expo-image-manipulator';
 import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query';
 import { Colors, Fonts, Spacing, Radius } from '../../theme';
-import { communitiesService, gamesService, rawgService } from '../../services/api';
+import { communitiesService, rawgService, uploadService } from '../../services/api';
 
 const GENRES = ['RPG', 'Action', 'Indie', 'Roguelike', 'Platformer', 'Soulsborne', 'Strategy', 'Horror', 'Puzzle', 'Sports', 'FPS', 'Racing'];
-const ICONS  = ['🎮', '⚔️', '🏹', '🧙', '🤖', '👾', '🎲', '🌍', '🔫', '🏎️', '⚽', '🧩'];
+
+const MAX_IMAGE_BYTES = 2 * 1024 * 1024; // 2 MB
 
 // ─── DEBOUNCE HOOK ────────────────────────────────────────────────────────────
 function useDebounce(value: string, delay: number) {
@@ -33,8 +37,70 @@ export default function CreateCommunityScreen() {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [genre, setGenre] = useState('');
-  const [icon, setIcon] = useState('🎮');
   const [isPrivate, setIsPrivate] = useState(false);
+
+  // Photo
+  const [photoUri, setPhotoUri] = useState<string | null>(null);   // local preview
+  const [photoBase64, setPhotoBase64] = useState<string | null>(null);
+  const [photoUploading, setPhotoUploading] = useState(false);
+  const [coverUrl, setCoverUrl] = useState<string | null>(null);   // URL após upload
+
+  const handlePickPhoto = async () => {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert('Permissão necessária', 'Permita acesso às fotos nas configurações.');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 1,          // deixa em 1 aqui — o resize+compress vem depois via manipulateAsync
+      base64: false,
+      allowsEditing: true, // abre o crop nativo do SO
+      aspect: [1, 1],      // força recorte quadrado
+    });
+    if (result.canceled || !result.assets[0]) return;
+
+    const asset = result.assets[0];
+
+    setPhotoUri(asset.uri);
+    setPhotoUploading(true);
+
+    try {
+      // Redimensiona para 400×400 e comprime para ~40% — leve o suficiente para avatar de comunidade
+      const manipulated = await ImageManipulator.manipulateAsync(
+        asset.uri,
+        [{ resize: { width: 400, height: 400 } }],
+        { compress: 0.4, format: ImageManipulator.SaveFormat.JPEG },
+      );
+
+      // Verificar tamanho final já comprimido
+      const info = await FileSystem.getInfoAsync(manipulated.uri, { size: true });
+      if ((info as any).size > MAX_IMAGE_BYTES) {
+        Alert.alert('Imagem muito grande', 'A foto deve ter no maximo 2 MB mesmo apos compressao. Escolha outra imagem.');
+        setPhotoUri(null);
+        setPhotoUploading(false);
+        return;
+      }
+
+      const base64 = await FileSystem.readAsStringAsync(manipulated.uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+
+      const up = await uploadService.uploadImage(base64);
+      const url = up?.url ?? up?.image_url ?? up?.cover_url ?? null;
+      setCoverUrl(url);
+    } catch (e: any) {
+      Alert.alert('Erro no upload', e?.message ?? 'Nao foi possivel enviar a foto.');
+      setPhotoUri(null);
+    } finally {
+      setPhotoUploading(false);
+    }
+  };
+
+  const handleRemovePhoto = () => {
+    setPhotoUri(null);
+    setCoverUrl(null);
+  };
 
   // Game linking
   const [gameSearch, setGameSearch] = useState('');
@@ -44,9 +110,7 @@ export default function CreateCommunityScreen() {
   const { data: gameResults, isFetching: gamesFetching } = useQuery({
     queryKey: ['game-search-community', debouncedGameSearch],
     queryFn: () => rawgService.search(debouncedGameSearch),
-    select: (raw: any) => {
-      return Array.isArray(raw) ? raw.slice(0, 5) : [];
-    },
+    select: (raw: any) => Array.isArray(raw) ? raw.slice(0, 5) : [],
     enabled: debouncedGameSearch.length >= 2 && !linkedGame,
   });
 
@@ -65,11 +129,15 @@ export default function CreateCommunityScreen() {
 
   const handleSubmit = () => {
     if (!name.trim()) {
-      Alert.alert('Nome obrigatório', 'Dê um nome para a comunidade.');
+      Alert.alert('Nome obrigatorio', 'De um nome para a comunidade.');
       return;
     }
     if (description.trim().length < 10) {
-      Alert.alert('Descrição curta', 'Mínimo 10 caracteres.');
+      Alert.alert('Descricao curta', 'Minimo 10 caracteres.');
+      return;
+    }
+    if (photoUploading) {
+      Alert.alert('Aguarde', 'A foto ainda esta sendo enviada.');
       return;
     }
 
@@ -78,7 +146,7 @@ export default function CreateCommunityScreen() {
       .replace(/[^a-z0-9\s-]/g, '')
       .trim().replace(/\s+/g, '-')
       .replace(/-+/g, '-')
-      + '-' + Date.now().toString(36); // make slug unique
+      + '-' + Date.now().toString(36);
 
     const payload: any = {
       name: name.trim(),
@@ -87,9 +155,8 @@ export default function CreateCommunityScreen() {
       is_private: isPrivate ? 1 : 0,
     };
 
-    // Only add optional fields if they have values
     if (genre) payload.genre = genre;
-    if (icon) payload.icon = icon;
+    if (coverUrl) payload.cover_url = coverUrl;
 
     if (linkedGame) {
       payload.game_id = linkedGame.rawg_id ?? linkedGame.id;
@@ -129,20 +196,51 @@ export default function CreateCommunityScreen() {
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        {/* Icon selector */}
+
+        {/* Foto da comunidade */}
         <View style={styles.field}>
-          <Text style={styles.fieldLabel}>ÍCONE</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-            {ICONS.map(ic => (
-              <TouchableOpacity
-                key={ic}
-                style={[styles.iconOption, icon === ic && styles.iconOptionActive]}
-                onPress={() => { Haptics.selectionAsync(); setIcon(ic); }}
-              >
-                <Text style={{ fontSize: 24 }}>{ic}</Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
+          <View style={styles.fieldLabelRow}>
+            <Text style={styles.fieldLabel}>FOTO DA COMUNIDADE</Text>
+            <Text style={styles.fieldHint}>max 2 MB</Text>
+          </View>
+
+          {photoUri ? (
+            <View style={styles.photoPreviewWrap}>
+              <Image source={{ uri: photoUri }} style={styles.photoPreview} contentFit="cover" />
+
+              {/* overlay de loading durante upload */}
+              {photoUploading && (
+                <View style={styles.photoLoadingOverlay}>
+                  <ActivityIndicator color={Colors.accent} size="large" />
+                  <Text style={styles.photoLoadingText}>Enviando...</Text>
+                </View>
+              )}
+
+              {/* badge de sucesso */}
+              {!photoUploading && coverUrl && (
+                <View style={styles.photoSuccessBadge}>
+                  <Text style={styles.photoSuccessText}>OK</Text>
+                </View>
+              )}
+
+              {/* botao remover */}
+              {!photoUploading && (
+                <TouchableOpacity style={styles.photoRemoveBtn} onPress={handleRemovePhoto}>
+                  <Text style={styles.photoRemoveText}>X</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          ) : (
+            <TouchableOpacity style={styles.photoPickerBtn} onPress={handlePickPhoto} activeOpacity={0.8}>
+              <View style={styles.photoPickerInner}>
+                <View style={styles.photoPickerIcon}>
+                  <Text style={styles.photoPickerIconText}>+</Text>
+                </View>
+                <Text style={styles.photoPickerLabel}>Escolher foto</Text>
+                <Text style={styles.photoPickerSub}>JPG ou PNG, ate 2 MB</Text>
+              </View>
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* Name */}
@@ -152,7 +250,7 @@ export default function CreateCommunityScreen() {
             style={styles.input}
             value={name}
             onChangeText={setName}
-            placeholder="Ex: Roguelikes Anônimos"
+            placeholder="Ex: Roguelikes Anonimos"
             placeholderTextColor={Colors.muted}
             maxLength={60}
           />
@@ -161,14 +259,14 @@ export default function CreateCommunityScreen() {
         {/* Description */}
         <View style={styles.field}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: Spacing.sm }}>
-            <Text style={styles.fieldLabel}>DESCRIÇÃO</Text>
+            <Text style={styles.fieldLabel}>DESCRICAO</Text>
             <Text style={styles.charCount}>{description.length}/500</Text>
           </View>
           <TextInput
             style={[styles.input, styles.textarea]}
             value={description}
             onChangeText={setDescription}
-            placeholder="Sobre o que é essa comunidade? Quem pode participar?"
+            placeholder="Sobre o que e essa comunidade? Quem pode participar?"
             placeholderTextColor={Colors.muted}
             multiline
             maxLength={500}
@@ -259,8 +357,8 @@ export default function CreateCommunityScreen() {
           onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setIsPrivate(!isPrivate); }}
         >
           <View>
-            <Text style={styles.toggleTitle}>🔒 Comunidade privada</Text>
-            <Text style={styles.toggleSub}>Novos membros precisam de aprovação</Text>
+            <Text style={styles.toggleTitle}>Comunidade privada</Text>
+            <Text style={styles.toggleSub}>Novos membros precisam de aprovacao</Text>
           </View>
           <View style={[styles.toggle, isPrivate && styles.toggleActive]}>
             <View style={[styles.toggleThumb, isPrivate && styles.toggleThumbActive]} />
@@ -281,12 +379,58 @@ const styles = StyleSheet.create({
   createText: { fontFamily: Fonts.monoBold, fontSize: 13, color: '#0a0a0f' },
   content: { paddingHorizontal: Spacing.lg, paddingTop: Spacing.lg, gap: Spacing.xl, paddingBottom: 100 },
   field: { gap: 8 },
+  fieldLabelRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   fieldLabel: { fontFamily: Fonts.monoBold, fontSize: 10, letterSpacing: 2, color: Colors.muted },
+  fieldHint: { fontFamily: Fonts.mono, fontSize: 10, color: Colors.muted },
   charCount: { fontFamily: Fonts.mono, fontSize: 10, color: Colors.muted },
   input: { backgroundColor: Colors.surface, borderRadius: Radius.xl, paddingHorizontal: 16, paddingVertical: 12, color: Colors.text, fontFamily: Fonts.body, fontSize: 14, borderWidth: 1, borderColor: Colors.border },
   textarea: { minHeight: 100, textAlignVertical: 'top' },
-  iconOption: { width: 52, height: 52, borderRadius: Radius.lg, backgroundColor: Colors.surface, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: 'transparent' },
-  iconOptionActive: { borderColor: Colors.accent, backgroundColor: Colors.accent + '15' },
+
+  // Photo picker
+  photoPickerBtn: {
+    borderRadius: Radius.xl, borderWidth: 1.5,
+    borderColor: Colors.border, borderStyle: 'dashed',
+    backgroundColor: Colors.surface, overflow: 'hidden',
+  },
+  photoPickerInner: {
+    height: 130, alignItems: 'center', justifyContent: 'center', gap: 8,
+  },
+  photoPickerIcon: {
+    width: 48, height: 48, borderRadius: 24,
+    backgroundColor: Colors.accent + '18', borderWidth: 1, borderColor: Colors.accent + '40',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  photoPickerIconText: { fontFamily: Fonts.monoBold, fontSize: 28, color: Colors.accent, lineHeight: 32 },
+  photoPickerLabel: { fontFamily: Fonts.bodyBold, fontSize: 14, color: Colors.text },
+  photoPickerSub: { fontFamily: Fonts.mono, fontSize: 11, color: Colors.muted },
+
+  // Photo preview
+  photoPreviewWrap: {
+    width: 120, height: 120, borderRadius: Radius.xl,
+    overflow: 'hidden', borderWidth: 1, borderColor: Colors.border,
+    position: 'relative',
+  },
+  photoPreview: { width: '100%', height: '100%' },
+  photoLoadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    alignItems: 'center', justifyContent: 'center', gap: 6,
+  },
+  photoLoadingText: { fontFamily: Fonts.mono, fontSize: 11, color: '#fff' },
+  photoSuccessBadge: {
+    position: 'absolute', bottom: 6, right: 6,
+    backgroundColor: Colors.teal, borderRadius: 10,
+    paddingHorizontal: 7, paddingVertical: 2,
+  },
+  photoSuccessText: { fontFamily: Fonts.monoBold, fontSize: 9, color: '#fff' },
+  photoRemoveBtn: {
+    position: 'absolute', top: 4, right: 4,
+    width: 22, height: 22, borderRadius: 11,
+    backgroundColor: 'rgba(0,0,0,0.65)', alignItems: 'center', justifyContent: 'center',
+  },
+  photoRemoveText: { fontFamily: Fonts.monoBold, fontSize: 11, color: '#fff', lineHeight: 13 },
+
+  // Genre / toggle
   genreChip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: Radius.full, backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border },
   genreChipActive: { borderColor: Colors.accent, backgroundColor: Colors.accent + '15' },
   genreChipText: { fontFamily: Fonts.mono, fontSize: 12, color: Colors.muted },

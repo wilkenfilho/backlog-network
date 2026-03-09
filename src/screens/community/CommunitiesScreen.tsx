@@ -3,10 +3,54 @@ import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, RefreshC
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Image } from 'expo-image';
 import { useQuery } from '@tanstack/react-query';
 import { Colors, Fonts, Spacing, Radius, Shadows } from '../../theme';
 import { EmptyState } from '../../components';
 import { communitiesService } from '../../services/api';
+
+// Avatar da comunidade: foto se tiver, iniciais do nome como fallback
+function CommunityAvatar({ coverUrl, name, size = 56 }: { coverUrl?: string; name: string; size?: number }) {
+  const initials = name
+    .split(' ')
+    .slice(0, 2)
+    .map((w: string) => w[0]?.toUpperCase() ?? '')
+    .join('');
+
+  if (coverUrl) {
+    return (
+      <Image
+        source={{ uri: coverUrl }}
+        style={{ width: size, height: size, borderRadius: size * 0.22 }}
+        contentFit="cover"
+      />
+    );
+  }
+
+  return (
+    <View style={[
+      avatarStyles.fallback,
+      { width: size, height: size, borderRadius: size * 0.22 },
+    ]}>
+      <Text style={[avatarStyles.initials, { fontSize: size * 0.35 }]}>{initials || '?'}</Text>
+    </View>
+  );
+}
+
+const avatarStyles = StyleSheet.create({
+  fallback: {
+    backgroundColor: Colors.purple + '30',
+    borderWidth: 1,
+    borderColor: Colors.purple + '50',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  initials: {
+    fontFamily: Fonts.monoBold,
+    color: Colors.accent,
+    includeFontPadding: false,
+  },
+});
 
 export default function CommunitiesScreen() {
   const insets = useSafeAreaInsets();
@@ -61,8 +105,7 @@ export default function CommunitiesScreen() {
             activeOpacity={0.85}
           >
             <View style={styles.cardIcon}>
-              <LinearGradient colors={[Colors.purple + '40', Colors.bg]} style={StyleSheet.absoluteFill} />
-              <Text style={{ fontSize: 28 }}>{item.icon_url ?? '🎮'}</Text>
+              <CommunityAvatar coverUrl={item.cover_url ?? item.icon_url} name={item.name ?? ''} size={40} />
             </View>
             <View style={styles.cardInfo}>
               <Text style={styles.cardName}>{item.name}</Text>
@@ -83,7 +126,7 @@ export default function CommunitiesScreen() {
         ListEmptyComponent={() => (
           isLoading
             ? <View style={{ padding: 40, alignItems: 'center' }}><Text style={{ color: Colors.muted, fontFamily: Fonts.mono }}>Carregando...</Text></View>
-            : <EmptyState emoji="🏘️" title="Nenhuma comunidade" subtitle="Seja o primeiro a criar uma!" />
+            : <EmptyState emoji="" title="Nenhuma comunidade" subtitle="Seja o primeiro a criar uma!" />
         )}
       />
     </View>
