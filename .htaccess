@@ -1,0 +1,31 @@
+# stackd-api/.htaccess
+# Redireciona todas as rotas para o index.php (API router)
+
+Options -Indexes
+Options -MultiViews
+
+RewriteEngine On
+
+# Repassa o header Authorization para o PHP
+# (Hostgator/Apache bloqueia por padrao — sem isso auth_required() recebe string vazia)
+RewriteCond %{HTTP:Authorization} ^(.*)
+RewriteRule .* - [e=HTTP_AUTHORIZATION:%1]
+
+# Bloqueia acesso direto a arquivos sensíveis
+RewriteRule ^\.env$ - [F,L]
+RewriteRule ^composer\.(json|lock)$ - [F,L]
+
+# Redireciona tudo para o index.php, exceto arquivos existentes
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ index.php [QSA,L]
+
+# Headers de segurança
+Header always set X-Content-Type-Options "nosniff"
+Header always set X-Frame-Options "DENY"
+Header always set Referrer-Policy "no-referrer"
+
+# CORS para o app mobile
+Header always set Access-Control-Allow-Origin "*"
+Header always set Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+Header always set Access-Control-Allow-Headers "Content-Type, Authorization"

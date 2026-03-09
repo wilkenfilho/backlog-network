@@ -248,9 +248,21 @@ export const messagesService = {
   },
   async send(toUserId: string, body: string, imageUrl?: string) {
     try {
-      return (await api.post('/messages', { to_user_id: toUserId, body, message: body, image_url: imageUrl ?? null })).data;
+      // Tenta os field names mais comuns — backends variam
+      return (await api.post('/messages', {
+        to_user_id: toUserId,
+        receiver_id: toUserId,
+        recipient_id: toUserId,
+        body,
+        message: body,
+        content: body,
+        image_url: imageUrl ?? null,
+      })).data;
     } catch (err: any) {
-      const msg = err?.response?.data?.error ?? err?.response?.data?.message ?? err?.message ?? 'Erro ao enviar mensagem';
+      const d = err?.response?.data;
+      const msg = (typeof d === 'string' && d.length < 300 ? d : null)
+        ?? d?.error ?? d?.message ?? d?.errors
+        ?? err?.message ?? 'Erro ao enviar mensagem';
       throw new Error(typeof msg === 'object' ? JSON.stringify(msg) : String(msg));
     }
   },
@@ -269,7 +281,29 @@ export const fansService = {
 export default api;
 
 export const uploadService = {
-  async uploadImage(base64: string) { return (await api.post('/upload', { image_base64: base64 })).data; },
+  async uploadImage(base64: string) {
+    // Tenta endpoints comuns — backends variam no path de upload
+    const endpoints = ['/upload', '/upload/image', '/images/upload', '/media/upload'];
+    let lastError: any;
+    for (const endpoint of endpoints) {
+      try {
+        const res = await api.post(endpoint, { image_base64: base64 });
+        if (res.data?.url || res.data?.image_url || res.data?.cover_url || res.data?.path) {
+          return res.data;
+        }
+      } catch (err: any) {
+        // 404 = endpoint errado, tenta o próximo; qualquer outro erro para aqui
+        if (err?.response?.status !== 404) {
+          const d = err?.response?.data;
+          const msg = (typeof d === 'string' && d.length < 300 ? d : null)
+            ?? d?.error ?? d?.message ?? err?.message ?? 'Erro no upload';
+          throw new Error(typeof msg === 'object' ? JSON.stringify(msg) : String(msg));
+        }
+        lastError = err;
+      }
+    }
+    throw new Error(`Endpoint de upload nao encontrado (404). Verifique o backend. Ultimo erro: ${lastError?.message}`);
+  },
 };
 
 export const storiesService = {

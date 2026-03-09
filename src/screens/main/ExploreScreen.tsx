@@ -266,11 +266,7 @@ export default function ExploreScreen() {
 
       {/* GAMES TAB */}
       {activeTab === 'games' && (
-        <ScrollView
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={styles.scrollContent}
-          refreshControl={<RefreshControl refreshing={false} onRefresh={handleRefresh} tintColor={Colors.accent} />}
-        >
+        <View style={{ flex: 1 }}>
           {/* Genre filters */}
           <ScrollView
             horizontal
@@ -294,33 +290,43 @@ export default function ExploreScreen() {
               <Text style={[styles.loadingText, { marginTop: 12 }]}>Carregando jogos...</Text>
             </View>
           ) : games.length > 0 ? (
-            <View style={styles.gamesGrid}>
-              {games.map((game: any, i: number) => (
+            <FlatList
+              data={games}
+              keyExtractor={(game: any, i: number) => String(game.id ?? i)}
+              numColumns={2}
+              renderItem={({ item: game }) => (
                 <GameCard
-                  key={game.id ?? i}
                   game={game}
                   onPress={() => navigation.navigate('GameDetail', {
                     gameId: game.id,
                     game: { ...game, title: game.title ?? game.name, coverUrl: game.cover_url ?? game.coverUrl },
                   })}
                 />
-              ))}
-            </View>
+              )}
+              contentContainerStyle={styles.gamesGrid}
+              showsVerticalScrollIndicator={false}
+              initialNumToRender={6}
+              maxToRenderPerBatch={6}
+              windowSize={5}
+              removeClippedSubviews={true}
+              refreshControl={<RefreshControl refreshing={false} onRefresh={handleRefresh} tintColor={Colors.accent} />}
+              ListFooterComponent={
+                !isSearching && games.length > 0 ? (
+                  <TouchableOpacity
+                    style={styles.loadMoreBtn}
+                    onPress={() => setGamesPage(p => p + 1)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.loadMoreText}>Carregar mais jogos</Text>
+                  </TouchableOpacity>
+                ) : null
+              }
+            />
           ) : (
             <EmptyState emoji="🎮" title="Nenhum jogo encontrado"
               subtitle={isSearching ? `Sem resultados para "${debouncedSearch}"` : 'Tente outra categoria.'} />
           )}
-          {/* Load More */}
-          {!isSearching && games.length > 0 && (
-            <TouchableOpacity
-              style={styles.loadMoreBtn}
-              onPress={() => setGamesPage(p => p + 1)}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.loadMoreText}>Carregar mais jogos</Text>
-            </TouchableOpacity>
-          )}
-        </ScrollView>
+        </View>
       )}
 
       {/* TWITCH TAB — fullscreen webview, no search */}
@@ -471,10 +477,10 @@ const styles = StyleSheet.create({
   genreBtnActive: { borderColor: Colors.accent, backgroundColor: Colors.accent + '15' },
   genreBtnText: { fontFamily: Fonts.mono, fontSize: 12, color: Colors.muted },
   genreBtnTextActive: { color: Colors.accent },
-  gamesGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
+  gamesGrid: { paddingHorizontal: 4, paddingBottom: 20 },
   loadMoreBtn: { marginTop: 16, marginBottom: 8, alignSelf: 'center', paddingHorizontal: 28, paddingVertical: 12, borderRadius: Radius.full, borderWidth: 1, borderColor: Colors.accent, backgroundColor: Colors.accent + '12' },
   loadMoreText: { fontFamily: Fonts.monoBold, fontSize: 13, color: Colors.accent },
-  gameCard: { width: '47%' as any, backgroundColor: Colors.card, borderRadius: Radius.xl, borderWidth: 1, borderColor: Colors.border, overflow: 'hidden', ...Shadows.card },
+  gameCard: { flex: 1, margin: 6, backgroundColor: Colors.card, borderRadius: Radius.xl, borderWidth: 1, borderColor: Colors.border, overflow: 'hidden', ...Shadows.card },
   gameCover: { width: '100%' as any, aspectRatio: 3 / 4 },
   gameCardInfo: { padding: Spacing.sm },
   gameCardTitle: { fontFamily: Fonts.bodyBold, fontSize: 13, color: Colors.text, lineHeight: 18, marginBottom: 2 },

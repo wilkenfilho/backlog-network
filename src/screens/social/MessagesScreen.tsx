@@ -255,7 +255,7 @@ function ChatScreen({ conv, onBack }: { conv: Conversation; onBack: () => void }
       queryClient.invalidateQueries({ queryKey: ['conversations'] });
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
     },
-    onError: () => Alert.alert('Erro', 'Não foi possível enviar a mensagem.'),
+    onError: (err: any) => Alert.alert('Erro ao enviar', err?.message ?? 'Nao foi possivel enviar a mensagem.'),
   });
 
   const sendMessage = () => {

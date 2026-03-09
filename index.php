@@ -189,6 +189,19 @@ if ($route === 'setup' && $method === 'GET') {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     $tables[] = 'game_list_items';
 
+    $db->exec("CREATE TABLE IF NOT EXISTS messages (
+        id VARCHAR(36) PRIMARY KEY,
+        sender_id VARCHAR(36) NOT NULL,
+        receiver_id VARCHAR(36) NOT NULL,
+        body TEXT NOT NULL,
+        is_read TINYINT(1) DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_sender (sender_id),
+        INDEX idx_receiver (receiver_id),
+        INDEX idx_conversation (sender_id, receiver_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $tables[] = 'messages';
+
     respond(200, ['ok' => true, 'tables_ensured' => $tables]);
 }
 
@@ -1240,14 +1253,46 @@ if ($route === 'communities' || $resource === 'communities') {
     if ($method === 'POST' && !$sub && !$id) {
         $me = auth_required();
         $b  = body();
-        required_fields($b, ['name', 'description']);
-        $cid = uuid();
-        db()->prepare('INSERT INTO communities (id, owner_id, name, description, icon_url, genre, is_private, created_at, updated_at) VALUES (?,?,?,?,?,?,?,NOW(),NOW())')
-           ->execute([$cid, $me['id'], $b['name'], $b['description'], $b['icon'] ?? '🎮', $b['genre'] ?? null, ($b['is_private'] ?? false) ? 1 : 0]);
-        db()->prepare('INSERT INTO community_members (community_id, user_id, role, joined_at) VALUES (?,?,"owner",NOW())')->execute([$cid, $me['id']]);
-        respond(201, ['id' => $cid, 'name' => $b['name']]);
-    }
-    // GET /communities/:id — detalhes
+        if (empty($b['name'])) respond(400, ['error' => 'Nome e obrigatorio']);
+        if (empty($b['description'])) respond(400, ['error' => 'Descricao e obrigatoria']);
+
+        $cid  = uuid();
+        $slug = $b['slug'] ?? strtolower(trim(preg_replace('/[^A-Za-z0-9-]+/', '-', $b['name'])));
+
+        // Garante slug unico
+        $chk = db()->prepare('SELECT id FROM communities WHERE slug = ? LIMIT 1');
+        $chk->execute([$slug]);
+        if ($chk->fetch()) $slug = $slug . '-' . substr($cid, 0, 6);
+
+        try {
+            db()->prepare('
+                INSERT INTO communities
+                    (id, slug, name, description, cover_url, genre, is_private, created_by, game_id, game_title, created_at, updated_at)
+                VALUES
+                    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+            ')->execute([
+                $cid,
+                $slug,
+                trim($b['name']),
+                trim($b['description']),
+                $b['cover_url']  ?? null,
+                $b['genre']      ?? null,
+                isset($b['is_private']) ? (int)$b['is_private'] : 0,
+                $me['id'],
+                $b['game_id']    ?? null,
+                $b['game_title'] ?? null,
+            ]);
+        } catch (PDOException $e) {
+            respond(500, ['error' => 'Erro ao criar comunidade: ' . $e->getMessage()]);
+        }
+
+        try {
+            db()->prepare('INSERT INTO community_members (community_id, user_id, role, joined_at) VALUES (?,?,"owner",NOW())')
+               ->execute([$cid, $me['id']]);
+        } catch (PDOException $e) { /* ignora se tabela nao existir */ }
+
+        respond(201, ['id' => $cid, 'slug' => $slug, 'name' => trim($b['name'])]);
+    }    // GET /communities/:id — detalhes
     if ($method === 'GET' && ($sub || $id)) {
         $cid = $sub ?? $id;
         auth_required();
@@ -1423,6 +1468,132 @@ if ($route === 'stories') {
         $me = auth_required();
         db()->prepare('DELETE FROM stories WHERE id = ? AND user_id = ?')->execute([$sub, $me['id']]);
         respond(200, ['ok' => true]);
+    }
+}
+
+// ─── ROUTE: /upload ──────────────────────────────────────────────────────────
+if ($route === 'upload' && $method === 'POST') {
+    $me = auth_required();
+    $b  = body();
+
+    $base64 = $b['image_base64'] ?? $b['base64'] ?? null;
+    if (!$base64) respond(400, ['error' => 'Campo image_base64 obrigatorio']);
+
+    // Decodifica e valida tamanho (max 2 MB)
+    $decoded = base64_decode($base64, true);
+    if ($decoded === false) respond(400, ['error' => 'Base64 invalido']);
+    if (strlen($decoded) > 2 * 1024 * 1024) respond(422, ['error' => 'Imagem muito grande. Maximo 2 MB.']);
+
+    // Detecta extensao pelo magic bytes
+    $ext = 'jpg';
+    if (substr($decoded, 0, 4) === "\x89PNG") $ext = 'png';
+    elseif (substr($decoded, 0, 4) === 'GIF8') $ext = 'gif';
+
+    // Garante pasta de uploads
+    $uploadDir = __DIR__ . '/uploads/';
+    if (!is_dir($uploadDir)) mkdir($uploadDir, 0755, true);
+
+    $filename = uuid() . '.' . $ext;
+    $filepath = $uploadDir . $filename;
+
+    if (file_put_contents($filepath, $decoded) === false) {
+        respond(500, ['error' => 'Erro ao salvar imagem no servidor']);
+    }
+
+    // Monta URL publica
+    $proto    = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+    $host     = $_SERVER['HTTP_HOST'] ?? 'wilkenperez.com';
+    $basePath = '/backlog-network-api/uploads/';
+    $url      = $proto . '://' . $host . $basePath . $filename;
+
+    respond(201, ['url' => $url, 'image_url' => $url, 'filename' => $filename]);
+}
+
+// ─── ROUTE: /messages ────────────────────────────────────────────────────────
+if ($route === 'messages') {
+
+    // GET /messages — lista conversas
+    if (!$sub && $method === 'GET') {
+        $me = auth_required();
+        $stmt = db()->prepare('
+            SELECT
+                m.id, m.sender_id, m.receiver_id,
+                m.body AS last_message,
+                m.created_at AS last_message_at,
+                CASE WHEN m.sender_id = ? THEN m.receiver_id ELSE m.sender_id END AS other_id,
+                u.username AS other_username,
+                u.display_name AS other_name,
+                u.avatar_url AS other_avatar,
+                (SELECT COUNT(*) FROM messages m2
+                 WHERE m2.receiver_id = ? AND m2.sender_id = u.id AND m2.is_read = 0) AS unread_count
+            FROM messages m
+            JOIN users u ON u.id = CASE WHEN m.sender_id = ? THEN m.receiver_id ELSE m.sender_id END
+            WHERE (m.sender_id = ? OR m.receiver_id = ?)
+              AND m.id = (
+                SELECT id FROM messages m3
+                WHERE (m3.sender_id = m.sender_id AND m3.receiver_id = m.receiver_id)
+                   OR (m3.sender_id = m.receiver_id AND m3.receiver_id = m.sender_id)
+                ORDER BY m3.created_at DESC LIMIT 1
+              )
+            ORDER BY m.created_at DESC
+            LIMIT 50
+        ');
+        $stmt->execute([$me['id'], $me['id'], $me['id'], $me['id'], $me['id']]);
+        respond(200, ['data' => $stmt->fetchAll()]);
+    }
+
+    // GET /messages/conversation/:userId — historico com um usuario
+    if ($sub === 'conversation' && $id && $method === 'GET') {
+        $me = auth_required();
+        $pg = paginate();
+        $stmt = db()->prepare('
+            SELECT m.*, u.username AS sender_username, u.avatar_url AS sender_avatar
+            FROM messages m
+            JOIN users u ON u.id = m.sender_id
+            WHERE (m.sender_id = ? AND m.receiver_id = ?)
+               OR (m.sender_id = ? AND m.receiver_id = ?)
+            ORDER BY m.created_at DESC
+            LIMIT ? OFFSET ?
+        ');
+        $stmt->execute([$me['id'], $id, $id, $me['id'], $pg['limit'], $pg['offset']]);
+        $msgs = array_reverse($stmt->fetchAll());
+
+        // Marca como lidas
+        db()->prepare('UPDATE messages SET is_read = 1 WHERE receiver_id = ? AND sender_id = ?')
+           ->execute([$me['id'], $id]);
+
+        respond(200, ['data' => $msgs]);
+    }
+
+    // POST /messages — enviar mensagem
+    if (!$sub && $method === 'POST') {
+        $me = auth_required();
+        $b  = body();
+
+        // Aceita vários nomes de campo do frontend
+        $toId = $b['to_user_id'] ?? $b['receiver_id'] ?? $b['recipient_id'] ?? null;
+        $body = $b['body'] ?? $b['message'] ?? $b['content'] ?? null;
+
+        if (!$toId) respond(400, ['error' => 'Destinatario obrigatorio (to_user_id)']);
+        if (!$body) respond(400, ['error' => 'Mensagem vazia']);
+        if ($toId === $me['id']) respond(400, ['error' => 'Nao pode enviar mensagem para si mesmo']);
+
+        // Verifica se destinatario existe
+        $dest = db()->prepare('SELECT id FROM users WHERE id = ? AND is_active = 1 LIMIT 1');
+        $dest->execute([$toId]);
+        if (!$dest->fetch()) respond(404, ['error' => 'Destinatario nao encontrado']);
+
+        $mid = uuid();
+        try {
+            db()->prepare('
+                INSERT INTO messages (id, sender_id, receiver_id, body, is_read, created_at)
+                VALUES (?, ?, ?, ?, 0, NOW())
+            ')->execute([$mid, $me['id'], $toId, trim($body)]);
+        } catch (PDOException $e) {
+            respond(500, ['error' => 'Erro ao enviar mensagem: ' . $e->getMessage()]);
+        }
+
+        respond(201, ['id' => $mid, 'body' => trim($body), 'sender_id' => $me['id'], 'receiver_id' => $toId]);
     }
 }
 
