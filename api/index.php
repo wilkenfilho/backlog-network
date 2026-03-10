@@ -47,9 +47,13 @@ set_exception_handler(function (Throwable $e) {
 
 set_error_handler(function (int $errno, string $errstr) {
     if (!(error_reporting() & $errno)) return false;
-    http_response_code(500);
-    echo json_encode(['error' => 'Erro no servidor.'], JSON_UNESCAPED_UNICODE);
-    exit;
+    // Apenas erros fatais viram 500; Notices/Warnings são ignorados silenciosamente
+    if ($errno === E_ERROR || $errno === E_PARSE || $errno === E_CORE_ERROR || $errno === E_COMPILE_ERROR) {
+        http_response_code(500);
+        echo json_encode(['error' => 'Erro no servidor.'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+    return false; // deixa o PHP lidar com Notices e Warnings normalmente
 });
 
 // ─── CORS + HEADERS ──────────────────────────────────────────────────────────

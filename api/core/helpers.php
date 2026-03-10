@@ -37,16 +37,17 @@ function paginate(): array {
     return ['page' => $page, 'limit' => $limit, 'offset' => ($page - 1) * $limit];
 }
 
+// Defensivo: usa ?? para colunas que podem não existir na tabela users
 function user_public(array $u): array {
     return [
-        'id'           => $u['id'],
-        'username'     => $u['username'],
-        'display_name' => $u['display_name'],
-        'avatar_url'   => $u['avatar_url'],
-        'bio'          => $u['bio'],
-        'level'        => (int)$u['level'],
-        'xp'           => (int)$u['xp'],
-        'is_premium'   => (bool)$u['is_premium'],
-        'created_at'   => $u['created_at'],
+        'id'           => $u['id']               ?? null,
+        'username'     => $u['username']          ?? null,
+        'display_name' => $u['display_name']      ?? null,
+        'avatar_url'   => $u['avatar_url']        ?? null,
+        'bio'          => $u['bio']               ?? null,
+        'level'        => (int)($u['level']       ?? 0),
+        'xp'           => (int)($u['xp']          ?? 0),
+        'is_premium'   => (bool)($u['is_premium'] ?? false),
+        'created_at'   => $u['created_at']        ?? null,
     ];
 }
