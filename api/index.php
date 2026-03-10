@@ -36,6 +36,22 @@ require_once __DIR__ . '/core/helpers.php';
 require_once __DIR__ . '/core/db.php';
 require_once __DIR__ . '/core/auth.php';
 
+// ─── GLOBAL ERROR HANDLER ────────────────────────────────────────────────────
+set_exception_handler(function (Throwable $e) {
+    http_response_code(500);
+    echo json_encode([
+        'error' => 'Erro interno no servidor. Tente novamente em instantes.',
+    ], JSON_UNESCAPED_UNICODE);
+    exit;
+});
+
+set_error_handler(function (int $errno, string $errstr) {
+    if (!(error_reporting() & $errno)) return false;
+    http_response_code(500);
+    echo json_encode(['error' => 'Erro no servidor.'], JSON_UNESCAPED_UNICODE);
+    exit;
+});
+
 // ─── CORS + HEADERS ──────────────────────────────────────────────────────────
 header('Content-Type: application/json; charset=utf-8');
 header('Access-Control-Allow-Origin: *');

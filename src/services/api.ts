@@ -25,8 +25,28 @@ api.interceptors.response.use(res => res, async (err: AxiosError) => {
 });
 
 function extractError(err: unknown): string {
-  if (axios.isAxiosError(err)) return (err.response?.data as any)?.error ?? 'Erro desconhecido';
-  return 'Erro de conexão';
+  if (axios.isAxiosError(err)) {
+    // Sem resposta do servidor = problema de rede/timeout/CORS
+    if (!err.response) {
+      if (err.code === 'ECONNABORTED') return 'Tempo de conexão esgotado. Verifique sua internet.';
+      return 'Não foi possível conectar ao servidor. Verifique sua internet.';
+    }
+    const data = err.response.data as any;
+    // Tenta pegar a mensagem de erro em vários campos possíveis
+    const msg = data?.error ?? data?.message ?? data?.msg ?? data?.detail;
+    if (msg && typeof msg === 'string') return msg;
+    if (msg && typeof msg === 'object') return JSON.stringify(msg);
+    // Respostas HTTP com erro mas sem corpo descritivo
+    if (err.response.status === 401) return 'Email ou senha incorretos.';
+    if (err.response.status === 403) return 'Acesso negado.';
+    if (err.response.status === 404) return 'Recurso não encontrado.';
+    if (err.response.status === 409) return 'Email ou username já em uso.';
+    if (err.response.status === 422) return 'Dados inválidos. Verifique os campos.';
+    if (err.response.status >= 500) return 'Erro interno no servidor. Tente novamente em instantes.';
+    return `Erro inesperado (${err.response.status})`;
+  }
+  if (err instanceof Error) return err.message;
+  return 'Erro desconhecido. Tente novamente.';
 }
 
 export const authService = {
