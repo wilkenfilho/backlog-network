@@ -16,8 +16,8 @@ function env(string $key, string $default = ''): string {
 define('DB_HOST',        env('DB_HOST',        'localhost'));
 define('DB_NAME',        env('DB_NAME',        'soraia05_backlognetwork'));
 define('DB_USER',        env('DB_USER',        'soraia05_wilkenp'));
-define('DB_PASS',        env('DB_PASS',        'Soraia2605*'));
-define('JWT_SECRET',     env('JWT_SECRET',     'CHANGE_ME_MIN_32_CHARS_XXXXXXXXXX'));
+define('DB_PASS',        env('DB_PASS',        ''));  // Defina em .env — nunca deixe a senha aqui
+define('JWT_SECRET',     env('JWT_SECRET',     ''));
 define('JWT_EXPIRES_HOURS', (int)env('JWT_EXPIRES_HOURS', '720'));
 define('RAWG_API_KEY',   env('RAWG_API_KEY',   ''));
 define('TWITCH_CLIENT_ID',     env('TWITCH_CLIENT_ID',     ''));
