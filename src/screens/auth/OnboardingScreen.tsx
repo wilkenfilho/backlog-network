@@ -117,7 +117,7 @@ export default function OnboardingScreen() {
         {/* Register link */}
         <View style={styles.registerRow}>
           <Text style={styles.registerLabel}>Não tem conta? </Text>
-          <TouchableOpacity onPress={() => navigation.navigate('Login')}>
+          <TouchableOpacity onPress={() => navigation.navigate('Register')}>
             <Text style={styles.registerLink}>Criar agora</Text>
           </TouchableOpacity>
         </View>

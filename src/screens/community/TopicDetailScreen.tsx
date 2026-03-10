@@ -1,17 +1,19 @@
 import React, { useState, useRef } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
-  TextInput, KeyboardAvoidingView, Platform, Alert,
+  TextInput, KeyboardAvoidingView, Platform, Alert, ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 import { Colors, Fonts, Spacing, Radius, Shadows } from '../../theme';
 import { Avatar, Button } from '../../components';
 import { useAuthStore } from '../../store/authStore';
 import { timeAgo } from '../../utils/helpers';
+import { topicsService } from '../../services/api';
 
 interface Reply {
   id: string; user_id: string; username: string;
@@ -29,31 +31,11 @@ const ROLE_LABELS: Record<string, string> = {
   owner: '👑 Dono', admin: '⚡ Admin', mod: '🛡️ Mod',
 };
 
-const MOCK_TOPIC = {
-  id: 't2',
-  title: 'Qual boss foi mais difícil pra vocês? (sem spoiler do DLC)',
-  body: 'Depois de zerar o jogo pela terceira vez, ainda acho que a Malenia é impossível na primeira tentativa. Vocês tiveram algum boss que travou mais que ela?\n\nPara mim o ranking ficou:\n1. Malenia\n2. Radahn (pré-nerf)\n3. Maliketh',
-  community_id: 'c1', community_name: 'Fãs de Elden Ring 🐉',
-  user_id: 'u2', username: 'mari_rpg', display_name: 'Mari RPG',
-  user_role: 'admin', likes_count: 312, replies_count: 98,
-  views_count: 4200, is_pinned: false, is_locked: false,
-  is_liked: true, created_at: new Date(Date.now() - 3600000).toISOString(),
-};
-
-const MOCK_REPLIES: Reply[] = [
-  { id: 'r1', user_id: 'u1', username: 'wilken', display_name: 'Wilken P.', user_role: 'owner', body: 'Malenia disparado. Morri mais de 80 vezes nela. O Radahn pré-nerf também era absurdo mas pelo menos dava pra usar a cavalaria pra distrair.', likes_count: 89, is_liked: false, parent_id: null, created_at: new Date(Date.now() - 3500000).toISOString(), is_removed: false },
-  { id: 'r2', user_id: 'u3', username: 'luca.dev', display_name: 'Luca', user_role: 'mod', body: 'Pra mim foi o Placidusax. Aquela arena no vazio é linda mas o boss em si é uma luta frustrante demais com aquelas garras.', likes_count: 44, is_liked: true, parent_id: null, created_at: new Date(Date.now() - 3200000).toISOString(), is_removed: false },
-  { id: 'r3', user_id: 'u4', username: 'rodrigao', display_name: 'Rodrigão', body: 'Concordo com o Luca, Placidusax é muito overrated de dificuldade mas o Malenia com a fase 2 me quebrou emocionalmente kkkk', likes_count: 31, is_liked: false, parent_id: 'r2', created_at: new Date(Date.now() - 3100000).toISOString(), is_removed: false },
-  { id: 'r4', user_id: 'u5', username: 'kae_plays', display_name: 'Kae', body: 'Alguém aqui usou o Let Me Solo Her? Aquele cara era lendário na época do lançamento 😂', likes_count: 127, is_liked: false, parent_id: null, created_at: new Date(Date.now() - 2800000).toISOString(), is_removed: false },
-  { id: 'r5', user_id: 'u1', username: 'wilken', display_name: 'Wilken P.', user_role: 'owner', body: 'Chamei ele umas 4 vezes sem vergonha nenhuma hahahaha', likes_count: 56, is_liked: false, parent_id: 'r4', created_at: new Date(Date.now() - 2700000).toISOString(), is_removed: false },
-];
-
-
 // ─── REPLY CARD ──────────────────────────────────────────────────────────────
 function ReplyCard({ reply, isNested = false, myRole, onReply, onLike, onModerate }: {
   reply: Reply; isNested?: boolean; myRole?: string;
   onReply: (reply: Reply) => void;
-  onLike: (id: string) => void;
+  onLike: (id: string, liked: boolean) => void;
   onModerate: (id: string) => void;
 }) {
   const [liked, setLiked] = useState(reply.is_liked);
@@ -63,8 +45,9 @@ function ReplyCard({ reply, isNested = false, myRole, onReply, onLike, onModerat
 
   const handleLike = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setLiked(!liked); setLikes(c => liked ? c - 1 : c + 1);
-    onLike(reply.id);
+    const newLiked = !liked;
+    setLiked(newLiked); setLikes(c => newLiked ? c + 1 : c - 1);
+    onLike(reply.id, newLiked);
   };
 
   if (reply.is_removed) {
@@ -119,45 +102,104 @@ function ReplyCard({ reply, isNested = false, myRole, onReply, onLike, onModerat
 export default function TopicDetailScreen() {
   const insets   = useSafeAreaInsets();
   const navigation = useNavigation<any>();
+  const route = useRoute<any>();
+  const queryClient = useQueryClient();
   const { user } = useAuthStore();
 
-  const [replies, setReplies] = useState<Reply[]>(MOCK_REPLIES);
+  const { topicId } = route.params ?? {};
+
   const [replyingTo, setReplyingTo] = useState<Reply | null>(null);
   const [text, setText] = useState('');
-  const [topicLiked, setTopicLiked] = useState(MOCK_TOPIC.is_liked);
-  const [topicLikes, setTopicLikes] = useState(MOCK_TOPIC.likes_count);
   const listRef = useRef<FlatList>(null);
-  const myRole = 'owner'; // viria do state real
 
-  // Organiza replies em árvore (raiz + filhos)
+  // ── Fetch topic + replies ────────────────────────────────────────────────
+  const { data, isLoading } = useQuery({
+    queryKey: ['topic', topicId],
+    queryFn: () => topicsService.get(topicId),
+    enabled: !!topicId,
+  });
+
+  const topic = data?.topic ?? data?.data ?? data ?? null;
+  const rawReplies: Reply[] = data?.replies ?? data?.data?.replies ?? [];
+
+  const [localLikedTopic, setLocalLikedTopic] = useState<boolean | null>(null);
+  const topicLiked = localLikedTopic ?? !!topic?.is_liked;
+  const topicLikes = topic?.likes_count ?? 0;
+
+  const myRole: string = topic?.my_role ?? user?.role ?? 'member';
+
+  // ── Replies state (para mutações otimistas) ──────────────────────────────
+  const [replyOverrides, setReplyOverrides] = useState<Record<string, Partial<Reply>>>({});
+  const replies = rawReplies.map(r => ({ ...r, ...(replyOverrides[r.id] ?? {}) }));
+
   const rootReplies = replies.filter(r => !r.parent_id);
   const childrenOf = (id: string) => replies.filter(r => r.parent_id === id);
 
+  // ── Send reply mutation ──────────────────────────────────────────────────
+  const replyMutation = useMutation({
+    mutationFn: ({ body, parentId }: { body: string; parentId?: string }) =>
+      topicsService.reply(topicId, body, parentId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['topic', topicId] });
+      setText(''); setReplyingTo(null);
+      setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 300);
+    },
+    onError: () => Alert.alert('Erro', 'Não foi possível enviar a resposta.'),
+  });
+
   const handleSend = () => {
-    if (!text.trim()) return;
+    if (!text.trim() || replyMutation.isPending) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    const newReply: Reply = {
-      id: Math.random().toString(),
-      user_id: 'me', username: user?.username ?? 'você',
-      display_name: user?.displayName ?? 'Você',
-      user_role: myRole, body: text.trim(),
-      likes_count: 0, is_liked: false,
-      parent_id: replyingTo?.id ?? null,
-      created_at: new Date().toISOString(),
-      is_removed: false,
-    };
-    setReplies(prev => [...prev, newReply]);
-    setText(''); setReplyingTo(null);
-    setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 150);
+    replyMutation.mutate({ body: text.trim(), parentId: replyingTo?.id });
   };
 
+  // ── Like reply ───────────────────────────────────────────────────────────
+  const handleLikeReply = (id: string, liked: boolean) => {
+    if (liked) topicsService.likeReply(id).catch(() => {});
+    else topicsService.unlikeReply(id).catch(() => {});
+  };
+
+  // ── Like topic ────────────────────────────────────────────────────────────
+  const handleLikeTopic = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    const newLiked = !topicLiked;
+    setLocalLikedTopic(newLiked);
+    if (newLiked) topicsService.like(topicId).catch(() => setLocalLikedTopic(!newLiked));
+    else topicsService.unlike(topicId).catch(() => setLocalLikedTopic(!newLiked));
+  };
+
+  // ── Moderate reply ───────────────────────────────────────────────────────
   const handleModerate = (replyId: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     Alert.alert('Moderação', 'O que deseja fazer com esta resposta?', [
-      { text: 'Remover', style: 'destructive', onPress: () => setReplies(prev => prev.map(r => r.id === replyId ? { ...r, is_removed: true } : r)) },
+      { text: 'Remover', style: 'destructive', onPress: async () => {
+        setReplyOverrides(prev => ({ ...prev, [replyId]: { is_removed: true } }));
+        await topicsService.removeReply(replyId).catch(() => {
+          setReplyOverrides(prev => { const n = { ...prev }; delete n[replyId]; return n; });
+        });
+      }},
       { text: 'Cancelar', style: 'cancel' },
     ]);
   };
+
+  if (isLoading) {
+    return (
+      <View style={[styles.container, { alignItems: 'center', justifyContent: 'center' }]}>
+        <ActivityIndicator color={Colors.accent} size="large" />
+      </View>
+    );
+  }
+
+  if (!topic) {
+    return (
+      <View style={[styles.container, { alignItems: 'center', justifyContent: 'center', padding: 32 }]}>
+        <Text style={{ color: Colors.muted, fontFamily: Fonts.mono, textAlign: 'center' }}>Tópico não encontrado.</Text>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={{ marginTop: 16 }}>
+          <Text style={{ color: Colors.accent, fontFamily: Fonts.bodyBold }}>← Voltar</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   const ListHeader = () => (
     <View>
@@ -167,13 +209,12 @@ export default function TopicDetailScreen() {
           <Text style={{ color: Colors.text, fontSize: 20 }}>←</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.communityChip}>
-          <Text style={styles.communityChipText}>{MOCK_TOPIC.community_name}</Text>
+          <Text style={styles.communityChipText}>{topic.community_name ?? 'Comunidade'}</Text>
         </TouchableOpacity>
         {myRole && ['mod','admin','owner'].includes(myRole) && (
           <TouchableOpacity onPress={() => Alert.alert('Tópico', 'Ações', [
-            { text: MOCK_TOPIC.is_pinned ? 'Desafixar' : 'Fixar 📌' },
-            { text: 'Bloquear respostas 🔒' },
-            { text: 'Remover tópico', style: 'destructive' },
+            { text: topic.is_pinned ? 'Desafixar' : 'Fixar 📌', onPress: () => topicsService.pin(topicId).then(() => queryClient.invalidateQueries({ queryKey: ['topic', topicId] })).catch(() => {}) },
+            { text: 'Remover tópico', style: 'destructive', onPress: () => topicsService.remove(topicId, 'inappropriate').then(() => navigation.goBack()).catch(() => {}) },
             { text: 'Cancelar', style: 'cancel' },
           ])}>
             <Text style={{ color: Colors.muted, fontSize: 20 }}>⋯</Text>
@@ -184,25 +225,25 @@ export default function TopicDetailScreen() {
       {/* Topic body */}
       <View style={styles.topicBlock}>
         <View style={styles.topicAuthorRow}>
-          <Avatar user={{ id: MOCK_TOPIC.user_id, username: MOCK_TOPIC.username, displayName: MOCK_TOPIC.display_name } as any} size={40} />
+          <Avatar user={{ id: topic.user_id, username: topic.username, displayName: topic.display_name } as any} size={40} />
           <View style={{ flex: 1 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <Text style={styles.topicAuthorName}>{MOCK_TOPIC.display_name}</Text>
-              {MOCK_TOPIC.user_role && ROLE_LABELS[MOCK_TOPIC.user_role] && (
-                <View style={[styles.replyRoleBadge, { borderColor: ROLE_COLORS[MOCK_TOPIC.user_role] + '50', backgroundColor: ROLE_COLORS[MOCK_TOPIC.user_role] + '15' }]}>
-                  <Text style={[styles.replyRoleText, { color: ROLE_COLORS[MOCK_TOPIC.user_role] }]}>{ROLE_LABELS[MOCK_TOPIC.user_role]}</Text>
+              <Text style={styles.topicAuthorName}>{topic.display_name}</Text>
+              {topic.user_role && ROLE_LABELS[topic.user_role] && (
+                <View style={[styles.replyRoleBadge, { borderColor: ROLE_COLORS[topic.user_role] + '50', backgroundColor: ROLE_COLORS[topic.user_role] + '15' }]}>
+                  <Text style={[styles.replyRoleText, { color: ROLE_COLORS[topic.user_role] }]}>{ROLE_LABELS[topic.user_role]}</Text>
                 </View>
               )}
             </View>
-            <Text style={styles.topicAuthorTime}>{timeAgo(MOCK_TOPIC.created_at)}</Text>
+            <Text style={styles.topicAuthorTime}>{timeAgo(topic.created_at)}</Text>
           </View>
         </View>
 
-        <Text style={styles.topicTitle}>{MOCK_TOPIC.title}</Text>
-        <Text style={styles.topicBody}>{MOCK_TOPIC.body}</Text>
+        <Text style={styles.topicTitle}>{topic.title}</Text>
+        <Text style={styles.topicBody}>{topic.body}</Text>
 
         <View style={styles.topicStats}>
-          <TouchableOpacity style={styles.topicAction} onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); setTopicLiked(!topicLiked); setTopicLikes(c => topicLiked ? c - 1 : c + 1); }}>
+          <TouchableOpacity style={styles.topicAction} onPress={handleLikeTopic}>
             <Text style={[styles.topicActionIcon, topicLiked && { color: Colors.red }]}>{topicLiked ? '♥' : '♡'}</Text>
             <Text style={[styles.topicActionCount, topicLiked && { color: Colors.red }]}>{topicLikes}</Text>
           </TouchableOpacity>
@@ -212,7 +253,7 @@ export default function TopicDetailScreen() {
           </View>
           <View style={styles.topicAction}>
             <Text style={styles.topicActionIcon}>👁</Text>
-            <Text style={styles.topicActionCount}>{MOCK_TOPIC.views_count.toLocaleString()}</Text>
+            <Text style={styles.topicActionCount}>{(topic.views_count ?? 0).toLocaleString()}</Text>
           </View>
         </View>
       </View>
@@ -241,16 +282,15 @@ export default function TopicDetailScreen() {
             <ReplyCard
               reply={item} myRole={myRole}
               onReply={setReplyingTo}
-              onLike={(id) => {}}
+              onLike={handleLikeReply}
               onModerate={handleModerate}
             />
-            {/* Replies aninhadas */}
             {childrenOf(item.id).map(child => (
               <ReplyCard
                 key={child.id} reply={child}
                 isNested myRole={myRole}
                 onReply={setReplyingTo}
-                onLike={(id) => {}}
+                onLike={handleLikeReply}
                 onModerate={handleModerate}
               />
             ))}
@@ -280,8 +320,8 @@ export default function TopicDetailScreen() {
             maxLength={2000}
           />
           <TouchableOpacity
-            style={[styles.sendBtn, !text.trim() && styles.sendBtnDisabled]}
-            onPress={handleSend} disabled={!text.trim()}
+            style={[styles.sendBtn, (!text.trim() || replyMutation.isPending) && styles.sendBtnDisabled]}
+            onPress={handleSend} disabled={!text.trim() || replyMutation.isPending}
           >
             <LinearGradient colors={[Colors.accent, Colors.accentDark]} style={styles.sendBtnGradient}>
               <Text style={{ color: '#0a0a0f', fontSize: 16, fontFamily: Fonts.monoBold }}>↑</Text>

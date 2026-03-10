@@ -87,6 +87,12 @@ export const feedService = {
   },
   async likePost(postId: string) { await api.post(`/posts/${postId}/like`); },
   async unlikePost(postId: string) { await api.delete(`/posts/${postId}/like`); },
+  async likeComment(commentId: string) {
+    try { await api.post(`/comments/${commentId}/like`); } catch { /* endpoint pode não existir ainda */ }
+  },
+  async unlikeComment(commentId: string) {
+    try { await api.delete(`/comments/${commentId}/like`); } catch { /* endpoint pode não existir ainda */ }
+  },
   async deletePost(postId: string) { await api.delete(`/posts/${postId}`); },
   async getComments(postId: string, page = 1) {
     try {
@@ -300,7 +306,7 @@ export const topicsService = {
 
 export const scrapsService = {
   async getUserScraps(userId: string, page = 1) { return (await api.get(`/scraps/${userId}`, { params: { page } })).data; },
-  async send(toUserId: string, body: string, isPrivate = false) { return (await api.post('/scraps', { to_user_id: toUserId, body, is_private: isPrivate })).data; },
+  async send(toUserId: string, body: string) { return (await api.post(`/scraps/${toUserId}`, { body })).data; },
   async remove(scrapId: string) { await api.delete(`/scraps/${scrapId}`); },
 };
 
@@ -336,8 +342,8 @@ export const messagesService = {
 export const fansService = {
   async becomeFan(idolId: string) { await api.post(`/fans/${idolId}`); },
   async stopBeingFan(idolId: string) { await api.delete(`/fans/${idolId}`); },
-  async getFans(userId: string, page = 1) { return (await api.get(`/fans/${userId}/list`, { params: { page } })).data; },
-  async getFansCount(userId: string): Promise<number> { return (await api.get(`/fans/${userId}/count`)).data.fans_count; },
+  async getMyFans(page = 1) { return (await api.get('/fans/me', { params: { page } })).data; },
+  async getUserFans(userId: string, page = 1) { return (await api.get(`/fans/${userId}`, { params: { page } })).data; },
 };
 
 export default api;

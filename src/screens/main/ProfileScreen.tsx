@@ -221,11 +221,12 @@ export default function ProfileScreen({ route }: any) {
   const lists = listsData ?? [];
 
   const filteredBacklog = backlogFilter === 'all' ? backlog : backlog.filter((b: any) => b.status === backlogFilter);
+  const safeBacklog = Array.isArray(backlog) ? backlog : [];
   const stats = {
-    playing:  backlog.filter((b: any) => b.status === 'playing').length,
-    finished: backlog.filter((b: any) => b.status === 'finished').length,
-    backlog:  backlog.filter((b: any) => b.status === 'backlog').length,
-    dropped:  backlog.filter((b: any) => b.status === 'dropped').length,
+    playing:  safeBacklog.filter((b: any) => b.status === 'playing').length,
+    finished: safeBacklog.filter((b: any) => b.status === 'finished').length,
+    backlog:  safeBacklog.filter((b: any) => b.status === 'backlog').length,
+    dropped:  safeBacklog.filter((b: any) => b.status === 'dropped').length,
   };
 
   const handleRefresh = async () => {

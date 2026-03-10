@@ -1,0 +1,34 @@
+<?php
+function jwt_create(string $userId): string {
+    $header  = base64_encode(json_encode(['alg' => 'HS256', 'typ' => 'JWT']));
+    $payload = base64_encode(json_encode([
+        'sub' => $userId,
+        'iat' => time(),
+        'exp' => time() + (JWT_EXPIRES_HOURS * 3600),
+    ]));
+    $sig = base64_encode(hash_hmac('sha256', "$header.$payload", JWT_SECRET, true));
+    return "$header.$payload.$sig";
+}
+
+function jwt_verify(string $token): ?string {
+    $parts = explode('.', $token);
+    if (count($parts) !== 3) return null;
+    [$header, $payload, $sig] = $parts;
+    $expected = base64_encode(hash_hmac('sha256', "$header.$payload", JWT_SECRET, true));
+    if (!hash_equals($expected, $sig)) return null;
+    $data = json_decode(base64_decode($payload), true);
+    if (!$data || $data['exp'] < time()) return null;
+    return $data['sub'];
+}
+
+function auth_required(): array {
+    $header = $_SERVER['HTTP_AUTHORIZATION'] ?? '';
+    if (!preg_match('/Bearer\s+(.+)/', $header, $m)) respond(401, ['error' => 'Token necessário']);
+    $userId = jwt_verify($m[1]);
+    if (!$userId) respond(401, ['error' => 'Token inválido ou expirado']);
+    $user = db()->prepare('SELECT * FROM users WHERE id = ? AND is_active = 1 AND is_banned = 0');
+    $user->execute([$userId]);
+    $row = $user->fetch();
+    if (!$row) respond(401, ['error' => 'Usuário não encontrado']);
+    return $row;
+}

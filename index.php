@@ -4,27 +4,39 @@
  * Compatível com Hostgator shared hosting (PHP 7.4+)
  * 
  * Coloque este arquivo em: public_html/backlog-network-api/index.php
- * Configure o .htaccess abaixo para roteamento
  */
 
-// ─── CONFIG ──────────────────────────────────────────────────────────────────
-define('DB_HOST', 'localhost');
-define('DB_NAME', 'soraia05_backlognetwork');
-define('DB_USER', 'soraia05_wilkenp');
-define('DB_PASS', 'Soraia2605*');
-define('JWT_SECRET', 'troque_por_string_aleatoria_longa_aqui_min_32_chars');
-define('JWT_EXPIRES_HOURS', 720);             // 30 dias
-define('RAWG_API_KEY', '089962d8173c4418813243d5de18e7eb');    // rawg.io/apiv2 — gratuito
+// ─── CONFIG — carrega do .env se existir, usa fallback caso contrário ─────────
+$envFile = __DIR__ . '/.env';
+if (file_exists($envFile)) {
+    foreach (file($envFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
+        if ($line && $line[0] !== '#' && str_contains($line, '=')) {
+            [$k, $v] = explode('=', $line, 2);
+            $_ENV[trim($k)] = trim($v);
+        }
+    }
+}
+function env(string $key, string $default = ''): string {
+    return $_ENV[$key] ?? getenv($key) ?: $default;
+}
+
+define('DB_HOST',        env('DB_HOST',        'localhost'));
+define('DB_NAME',        env('DB_NAME',        'soraia05_backlognetwork'));
+define('DB_USER',        env('DB_USER',        'soraia05_wilkenp'));
+define('DB_PASS',        env('DB_PASS',        ''));
+define('JWT_SECRET',     env('JWT_SECRET',     'CHANGE_ME_MIN_32_CHARS_XXXXXXXXXX'));
+define('JWT_EXPIRES_HOURS', (int)env('JWT_EXPIRES_HOURS', '720'));
+define('RAWG_API_KEY',   env('RAWG_API_KEY',   ''));
 
 // ─── TWITCH / IGDB ───────────────────────────────────────────────────────────
-define('TWITCH_CLIENT_ID',     'q2vh0f2s6y5qc8ses1rlrxprflrhmo');
-define('TWITCH_CLIENT_SECRET', 'z5qzgqrdsnu39tmhbvbdirzw0a9mze');
+define('TWITCH_CLIENT_ID',     env('TWITCH_CLIENT_ID',     ''));
+define('TWITCH_CLIENT_SECRET', env('TWITCH_CLIENT_SECRET', ''));
 define('TWITCH_API',           'https://api.twitch.tv/helix');
 define('TWITCH_AUTH',          'https://id.twitch.tv/oauth2/token');
 define('IGDB_API',             'https://api.igdb.com/v4');
 
 // ─── STEAM ───────────────────────────────────────────────────────────────────
-define('STEAM_API_KEY',   'E409C7E63D6D8D9CC506C5412FDF9381');
+define('STEAM_API_KEY',   env('STEAM_API_KEY',   ''));
 define('STEAM_API',       'https://api.steampowered.com');
 define('STEAM_STORE_API', 'https://store.steampowered.com');
 
@@ -79,6 +91,14 @@ function required_fields(array $data, array $fields): void {
     foreach ($fields as $f) {
         if (empty($data[$f])) respond(422, ['error' => "Campo obrigatório: $f"]);
     }
+}
+
+function is_valid_uuid(string $s): bool {
+    return (bool)preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $s);
+}
+
+function validate_id(string $id, string $label = 'ID'): void {
+    if (!is_valid_uuid($id)) respond(400, ['error' => "$label inválido"]);
 }
 
 // ─── JWT ──────────────────────────────────────────────────────────────────────
@@ -136,10 +156,20 @@ function user_public(array $u): array {
     ];
 }
 
-// ─── ROUTER ──────────────────────────────────────────────────────────────────
+$method = $_SERVER['REQUEST_METHOD'];
+$uri    = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+$uri    = preg_replace('#^/backlog-network-api#', '', $uri);  // remove base path
+$parts  = explode('/', trim($uri, '/'));
 
-// GET /setup — cria tabelas faltantes (só pode ser chamado 1x ou repetidamente, é idempotente)
-if ($route === 'setup' && $method === 'GET') {
+$resource = $parts[0] ?? '';
+$sub      = $parts[1] ?? '';
+$id       = $parts[2] ?? '';
+$action   = $parts[3] ?? '';
+
+// ============================================================
+// SETUP (cria tabelas faltantes) – pode ser chamado quantas vezes quiser
+// ============================================================
+if ($resource === 'setup' && $method === 'GET') {
     $db = db();
     $tables = [];
 
@@ -202,7 +232,6 @@ if ($route === 'setup' && $method === 'GET') {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     $tables[] = 'messages';
 
-    // ── Communities ──
     $db->exec("CREATE TABLE IF NOT EXISTS communities (
         id VARCHAR(36) PRIMARY KEY,
         slug VARCHAR(120) NOT NULL UNIQUE,
@@ -217,7 +246,8 @@ if ($route === 'setup' && $method === 'GET') {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         INDEX idx_slug (slug),
-        INDEX idx_created_by (created_by)
+        INDEX idx_created_by (created_by),
+        FOREIGN KEY (game_id) REFERENCES games(id) ON DELETE SET NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     $tables[] = 'communities';
 
@@ -233,30 +263,13 @@ if ($route === 'setup' && $method === 'GET') {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     $tables[] = 'community_members';
 
-    // Garante que a coluna is_private existe (para tabelas criadas antes desta atualização)
-    try {
-        $db->exec("ALTER TABLE communities ADD COLUMN is_private TINYINT(1) DEFAULT 0 AFTER genre");
-    } catch (PDOException $e) {
-        // Coluna já existe — ignorar
-    }
-
     respond(200, ['ok' => true, 'tables_ensured' => $tables]);
 }
-
-$method = $_SERVER['REQUEST_METHOD'];
-$uri    = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
-$uri    = preg_replace('#^/backlog-network-api#', '', $uri);  // remove base path
-$parts  = explode('/', trim($uri, '/'));
-
-$route  = $parts[0] ?? '';        // ex: "auth", "feed", "games"
-$sub    = $parts[1] ?? '';        // ex: "login", "me", "trending"
-$id     = $parts[2] ?? '';        // ex: UUID do game/user/post
-$action = $parts[3] ?? '';        // ex: "like", "follow", "comments"
 
 // ============================================================
 // AUTH
 // ============================================================
-if ($route === 'auth') {
+if ($resource === 'auth') {
 
     // POST /auth/register
     if ($sub === 'register' && $method === 'POST') {
@@ -311,7 +324,6 @@ if ($route === 'auth') {
         $me = auth_required();
         $db = db();
 
-        // Contar seguidores e seguindo
         $stats = $db->prepare('
             SELECT
                 (SELECT COUNT(*) FROM follows WHERE following_id = ?) AS followers_count,
@@ -336,7 +348,8 @@ if ($route === 'auth') {
     if ($sub === 'logout' && $method === 'POST') {
         respond(200, ['ok' => true]);
     }
-        // POST /auth/change-email
+
+    // POST /auth/change-email
     if ($sub === 'change-email' && $method === 'POST') {
         $me = auth_required();
         $b  = body();
@@ -389,7 +402,7 @@ if ($route === 'auth') {
 // ============================================================
 // FEED
 // ============================================================
-if ($route === 'feed' && $method === 'GET') {
+if ($resource === 'feed' && $method === 'GET') {
     $me = auth_required();
     $pg = paginate();
     $type = $_GET['type'] ?? 'friends';
@@ -397,7 +410,6 @@ if ($route === 'feed' && $method === 'GET') {
     $db = db();
 
     if ($type === 'friends') {
-        // Posts de quem o usuário segue + próprios
         $stmt = $db->prepare('
             SELECT p.*,
                    u.username, u.display_name, u.avatar_url,
@@ -415,7 +427,6 @@ if ($route === 'feed' && $method === 'GET') {
         ');
         $stmt->execute([$me['id'], $me['id'], $me['id'], $pg['limit'], $pg['offset']]);
     } else {
-        // Global — todos os posts
         $stmt = $db->prepare('
             SELECT p.*,
                    u.username, u.display_name, u.avatar_url,
@@ -433,9 +444,19 @@ if ($route === 'feed' && $method === 'GET') {
     $posts = $stmt->fetchAll();
     foreach ($posts as &$post) {
         $post['is_liked'] = (bool)$post['is_liked'];
-        $post['user'] = ['username' => $post['username'], 'display_name' => $post['display_name'], 'avatar_url' => $post['avatar_url']];
+        $post['user'] = [
+            'id' => $post['user_id'],
+            'username' => $post['username'],
+            'display_name' => $post['display_name'],
+            'avatar_url' => $post['avatar_url'],
+        ];
         if ($post['game_title']) {
-            $post['game'] = ['id' => $post['game_id'], 'title' => $post['game_title'], 'cover_url' => $post['game_cover'], 'developer' => $post['game_dev']];
+            $post['game'] = [
+                'id' => $post['game_id'],
+                'title' => $post['game_title'],
+                'cover_url' => $post['game_cover'],
+                'developer' => $post['game_dev'],
+            ];
         }
         unset($post['username'], $post['display_name'], $post['avatar_url'], $post['game_title'], $post['game_cover'], $post['game_dev']);
     }
@@ -446,7 +467,7 @@ if ($route === 'feed' && $method === 'GET') {
 // ============================================================
 // POSTS
 // ============================================================
-if ($route === 'posts') {
+if ($resource === 'posts') {
 
     // POST /posts — criar post
     if (!$sub && $method === 'POST') {
@@ -461,50 +482,77 @@ if ($route === 'posts') {
         respond(201, ['id' => $postId]);
     }
 
+    // DELETE /posts/:id
+    if ($sub && !$id && $method === 'DELETE') {
+        $me = auth_required();
+        $postId = $sub;
+        $stmt = db()->prepare('SELECT user_id FROM posts WHERE id = ?');
+        $stmt->execute([$postId]);
+        $post = $stmt->fetch();
+        if (!$post) respond(404, ['error' => 'Post não encontrado']);
+        if ($post['user_id'] !== $me['id']) respond(403, ['error' => 'Não autorizado']);
+        db()->prepare('DELETE FROM posts WHERE id = ?')->execute([$postId]);
+        respond(200, ['ok' => true]);
+    }
+
     // POST /posts/:id/like
-    if ($id && $action === 'like' && $method === 'POST') {
+    if ($id === 'like' && $method === 'POST') {
         $me = auth_required();
         try {
-            db()->prepare('INSERT INTO post_likes (user_id, post_id) VALUES (?,?)')->execute([$me['id'], $id]);
-            db()->prepare('UPDATE posts SET likes_count = likes_count + 1 WHERE id = ?')->execute([$id]);
-        } catch (PDOException $e) {} // já curtiu, ignora
+            db()->prepare('INSERT INTO post_likes (user_id, post_id) VALUES (?,?)')->execute([$me['id'], $sub]);
+            db()->prepare('UPDATE posts SET likes_count = likes_count + 1 WHERE id = ?')->execute([$sub]);
+        } catch (PDOException $e) {}
         respond(200, ['ok' => true]);
     }
 
     // DELETE /posts/:id/like
-    if ($id && $action === 'like' && $method === 'DELETE') {
+    if ($id === 'like' && $method === 'DELETE') {
         $me = auth_required();
         $db = db();
         $del = $db->prepare('DELETE FROM post_likes WHERE user_id = ? AND post_id = ?');
-        $del->execute([$me['id'], $id]);
+        $del->execute([$me['id'], $sub]);
         if ($del->rowCount() > 0)
-            $db->prepare('UPDATE posts SET likes_count = GREATEST(likes_count - 1, 0) WHERE id = ?')->execute([$id]);
+            $db->prepare('UPDATE posts SET likes_count = GREATEST(likes_count - 1, 0) WHERE id = ?')->execute([$sub]);
         respond(200, ['ok' => true]);
     }
 
     // GET /posts/:id/comments
-    if ($id && $action === 'comments' && $method === 'GET') {
-        $me = auth_required();
+    if ($id === 'comments' && $method === 'GET') {
         $pg = paginate();
         $stmt = db()->prepare('
             SELECT c.*, u.username, u.display_name, u.avatar_url
-            FROM comments c JOIN users u ON u.id = c.user_id
+            FROM comments c
+            JOIN users u ON u.id = c.user_id
             WHERE c.post_id = ? AND c.parent_id IS NULL
-            ORDER BY c.created_at ASC LIMIT ? OFFSET ?
+            ORDER BY c.created_at ASC
+            LIMIT ? OFFSET ?
         ');
-        $stmt->execute([$id, $pg['limit'], $pg['offset']]);
-        respond(200, ['data' => $stmt->fetchAll()]);
+        $stmt->execute([$sub, $pg['limit'], $pg['offset']]);
+        $comments = $stmt->fetchAll();
+        // Buscar respostas aninhadas
+        foreach ($comments as &$c) {
+            $replies = db()->prepare('
+                SELECT c.*, u.username, u.display_name, u.avatar_url
+                FROM comments c
+                JOIN users u ON u.id = c.user_id
+                WHERE c.parent_id = ?
+                ORDER BY c.created_at ASC
+            ');
+            $replies->execute([$c['id']]);
+            $c['replies'] = $replies->fetchAll();
+        }
+        respond(200, ['data' => $comments]);
     }
 
     // POST /posts/:id/comments
-    if ($id && $action === 'comments' && $method === 'POST') {
+    if ($id === 'comments' && $method === 'POST') {
         $me = auth_required();
         $b  = body();
         required_fields($b, ['text']);
         $cId = uuid();
         db()->prepare('INSERT INTO comments (id, post_id, user_id, text, parent_id) VALUES (?,?,?,?,?)')
-            ->execute([$cId, $id, $me['id'], $b['text'], $b['parent_id'] ?? null]);
-        db()->prepare('UPDATE posts SET comments_count = comments_count + 1 WHERE id = ?')->execute([$id]);
+            ->execute([$cId, $sub, $me['id'], $b['text'], $b['parent_id'] ?? null]);
+        db()->prepare('UPDATE posts SET comments_count = comments_count + 1 WHERE id = ?')->execute([$sub]);
         respond(201, ['id' => $cId]);
     }
 }
@@ -512,7 +560,7 @@ if ($route === 'posts') {
 // ============================================================
 // GAMES
 // ============================================================
-if ($route === 'games') {
+if ($resource === 'games') {
 
     // GET /games/search?q=elden
     if ($sub === 'search' && $method === 'GET') {
@@ -520,7 +568,6 @@ if ($route === 'games') {
         $q = trim($_GET['q'] ?? '');
         if (strlen($q) < 2) respond(200, ['data' => []]);
 
-        // 1. Busca no cache local primeiro
         $stmt = db()->prepare('SELECT id, title, developer, cover_url, rawg_rating, `backlog-network_rating` FROM games WHERE title LIKE ? LIMIT 20');
         $stmt->execute(["%$q%"]);
         $local = $stmt->fetchAll();
@@ -529,7 +576,6 @@ if ($route === 'games') {
             respond(200, ['data' => $local, 'source' => 'cache']);
         }
 
-        // 2. Busca na RAWG API
         $url = 'https://api.rawg.io/api/games?key=' . RAWG_API_KEY . '&search=' . urlencode($q) . '&page_size=10';
         $raw = @file_get_contents($url);
         if (!$raw) respond(200, ['data' => $local]);
@@ -538,14 +584,12 @@ if ($route === 'games') {
         $results  = [];
 
         foreach ($rawgData['results'] ?? [] as $rg) {
-            // Salva no cache local
             $gameId = uuid();
             $slug   = $rg['slug'] ?? strtolower(str_replace(' ', '-', $rg['name']));
             try {
                 db()->prepare('INSERT IGNORE INTO games (id, rawg_id, title, slug, cover_url, developer, rawg_rating, release_date) VALUES (?,?,?,?,?,?,?,?)')
                     ->execute([$gameId, $rg['id'], $rg['name'], $slug, $rg['background_image'], $rg['developers'][0]['name'] ?? null, $rg['rating'] ?? null, $rg['released'] ?? null]);
             } catch (PDOException $e) {
-                // slug duplicado — busca o existente
                 $ex = db()->prepare('SELECT id FROM games WHERE rawg_id = ?');
                 $ex->execute([$rg['id']]);
                 $exRow = $ex->fetch();
@@ -577,19 +621,16 @@ if ($route === 'games') {
     if ($sub && !$id && $method === 'GET') {
         auth_required();
 
-        // Tenta buscar por UUID interno primeiro
         $stmt = db()->prepare('SELECT * FROM games WHERE id = ?');
         $stmt->execute([$sub]);
         $game = $stmt->fetch();
 
-        // Se não achou, tenta por rawg_id
         if (!$game) {
             $stmt2 = db()->prepare('SELECT * FROM games WHERE rawg_id = ?');
             $stmt2->execute([$sub]);
             $game = $stmt2->fetch();
         }
 
-        // Se ainda não achou e parece numérico (rawg_id), tenta buscar na RAWG e cachear
         if (!$game && is_numeric($sub)) {
             $url = 'https://api.rawg.io/api/games/' . $sub . '?key=' . RAWG_API_KEY;
             $raw = @file_get_contents($url);
@@ -602,7 +643,6 @@ if ($route === 'games') {
                         db()->prepare('INSERT IGNORE INTO games (id, rawg_id, title, slug, cover_url, developer, rawg_rating, release_date, description) VALUES (?,?,?,?,?,?,?,?,?)')
                            ->execute([$gameId, $rg['id'], $rg['name'], $slug, $rg['background_image'], $rg['developers'][0]['name'] ?? null, $rg['rating'] ?? null, $rg['released'] ?? null, $rg['description_raw'] ?? null]);
                     } catch (PDOException $e) {
-                        // Pode ter sido inserido por outra request, busca de novo
                         $stmt3 = db()->prepare('SELECT * FROM games WHERE rawg_id = ?');
                         $stmt3->execute([$sub]);
                         $game = $stmt3->fetch();
@@ -618,7 +658,6 @@ if ($route === 'games') {
 
         if (!$game) respond(404, ['error' => 'Jogo não encontrado']);
 
-        // Plataformas e gêneros
         try {
             $plat = db()->prepare('SELECT platform FROM game_platforms WHERE game_id = ?');
             $plat->execute([$game['id']]);
@@ -634,18 +673,46 @@ if ($route === 'games') {
         respond(200, $game);
     }
 
+    // POST /games/sync (cria jogo a partir de rawg_id)
+    if ($sub === 'sync' && $method === 'POST') {
+        $me = auth_required();
+        $b = body();
+        $rawgId = $b['rawg_id'] ?? null;
+        if (!$rawgId) respond(400, ['error' => 'rawg_id obrigatório']);
+
+        // Verifica se já existe
+        $stmt = db()->prepare('SELECT * FROM games WHERE rawg_id = ?');
+        $stmt->execute([$rawgId]);
+        $game = $stmt->fetch();
+        if ($game) respond(200, ['game' => $game]);
+
+        // Busca na RAWG
+        $url = 'https://api.rawg.io/api/games/' . $rawgId . '?key=' . RAWG_API_KEY;
+        $raw = @file_get_contents($url);
+        if (!$raw) respond(404, ['error' => 'Jogo não encontrado na RAWG']);
+        $rg = json_decode($raw, true);
+        if (!$rg) respond(500, ['error' => 'Resposta inválida da RAWG']);
+
+        $gameId = uuid();
+        $slug = $rg['slug'] ?? strtolower(str_replace(' ', '-', $rg['name']));
+        db()->prepare('INSERT INTO games (id, rawg_id, title, slug, cover_url, developer, rawg_rating, release_date, description) VALUES (?,?,?,?,?,?,?,?,?)')
+           ->execute([$gameId, $rg['id'], $rg['name'], $slug, $rg['background_image'], $rg['developers'][0]['name'] ?? null, $rg['rating'] ?? null, $rg['released'] ?? null, $rg['description_raw'] ?? null]);
+
+        $new = db()->prepare('SELECT * FROM games WHERE id = ?');
+        $new->execute([$gameId]);
+        respond(200, ['game' => $new->fetch()]);
+    }
+
     // GET /games/:id/reviews
     if ($sub && $id === 'reviews' && $method === 'GET') {
         auth_required();
         $pg = paginate();
 
-        // Resolve game: aceita UUID interno OU rawg_id numérico
         $resolvedGameId = $sub;
         $check = db()->prepare('SELECT id FROM games WHERE id = ? LIMIT 1');
         $check->execute([$sub]);
         $row = $check->fetch();
         if (!$row) {
-            // Tenta buscar por rawg_id
             $check2 = db()->prepare('SELECT id FROM games WHERE rawg_id = ? LIMIT 1');
             $check2->execute([$sub]);
             $row2 = $check2->fetch();
@@ -677,7 +744,7 @@ if ($route === 'games') {
 // ============================================================
 // BACKLOG
 // ============================================================
-if ($route === 'backlog') {
+if ($resource === 'backlog') {
 
     // GET /backlog — meu backlog
     if (!$sub && $method === 'GET') {
@@ -757,7 +824,7 @@ if ($route === 'backlog') {
 // ============================================================
 // REVIEWS
 // ============================================================
-if ($route === 'reviews') {
+if ($resource === 'reviews') {
 
     // GET /reviews/me
     if ($sub === 'me' && $method === 'GET') {
@@ -788,11 +855,9 @@ if ($route === 'reviews') {
             respond(409, ['error' => 'Você já escreveu uma review para este jogo']);
         }
 
-        // Atualiza nota média do jogo
         db()->prepare('UPDATE games SET `backlog-network_rating` = (SELECT AVG(rating) FROM reviews WHERE game_id = ?), reviews_count = (SELECT COUNT(*) FROM reviews WHERE game_id = ?) WHERE id = ?')
             ->execute([$b['game_id'], $b['game_id'], $b['game_id']]);
 
-        // Cria post automático no feed
         $postId = uuid();
         db()->prepare('INSERT INTO posts (id, user_id, game_id, review_id, type, status, text) VALUES (?,?,?,?,?,?,?)')
             ->execute([$postId, $me['id'], $b['game_id'], $rId, 'review', 'finished', $b['body']]);
@@ -842,7 +907,7 @@ if ($route === 'reviews') {
 // ============================================================
 // USERS
 // ============================================================
-if ($route === 'users') {
+if ($resource === 'users') {
 
     // GET /users/suggested
     if ($sub === 'suggested' && $method === 'GET') {
@@ -900,7 +965,7 @@ if ($route === 'users') {
     }
 
     // GET /users/:id/backlog
-    if ($id && $action === 'backlog' && $method === 'GET') {
+    if ($id === 'backlog' && $method === 'GET') {
         auth_required();
         $status = $_GET['status'] ?? null;
         $query = 'SELECT b.*, g.title, g.cover_url FROM backlog b JOIN games g ON g.id = b.game_id WHERE b.user_id = ? AND b.is_private = 0';
@@ -912,7 +977,7 @@ if ($route === 'users') {
     }
 
     // POST /users/:id/follow
-    if ($sub && $id === 'follow' && $method === 'POST') {
+    if ($id === 'follow' && $method === 'POST') {
         $me = auth_required();
         if ($me['id'] === $sub) respond(400, ['error' => 'Você não pode se seguir']);
         try {
@@ -922,7 +987,7 @@ if ($route === 'users') {
     }
 
     // DELETE /users/:id/follow
-    if ($sub && $id === 'follow' && $method === 'DELETE') {
+    if ($id === 'follow' && $method === 'DELETE') {
         $me = auth_required();
         db()->prepare('DELETE FROM follows WHERE follower_id = ? AND following_id = ?')->execute([$me['id'], $sub]);
         respond(200, ['ok' => true]);
@@ -933,7 +998,6 @@ if ($route === 'users') {
         $me = auth_required();
         $b  = body();
 
-        // Handle username change with validation
         if (array_key_exists('username', $b)) {
             $newUsername = strtolower(trim($b['username']));
             if (strlen($newUsername) < 3 || strlen($newUsername) > 30)
@@ -968,7 +1032,8 @@ if ($route === 'users') {
         respond(200, ['available' => !$stmt->fetch()]);
     }
 
-        if ($sub === 'me' && $id === 'privacy' && $method === 'PATCH') {
+    // PATCH /users/me/privacy
+    if ($sub === 'me' && $id === 'privacy' && $method === 'PATCH') {
         $me = auth_required();
         $b  = body();
         $allowed = ['is_profile_public', 'backlog_visibility'];
@@ -1005,35 +1070,80 @@ if ($route === 'users') {
     }
 
     // POST /users/:id/block
-    if ($sub && $id === 'block' && $method === 'POST') {
+    if ($id === 'block' && $method === 'POST') {
         $me = auth_required();
         $targetId = $sub;
         if ($targetId === $me['id']) respond(422, ['error' => 'Não pode bloquear a si mesmo']);
         try {
             db()->prepare('INSERT INTO blocked_users (id, blocker_id, blocked_id) VALUES (?,?,?)')
                 ->execute([uuid(), $me['id'], $targetId]);
-            // Also unfollow both ways
             db()->prepare('DELETE FROM follows WHERE (follower_id = ? AND following_id = ?) OR (follower_id = ? AND following_id = ?)')
                 ->execute([$me['id'], $targetId, $targetId, $me['id']]);
-        } catch (PDOException $e) {
-            // Already blocked
-        }
+        } catch (PDOException $e) {}
         respond(200, ['ok' => true]);
     }
 
     // DELETE /users/:id/block
-    if ($sub && $id === 'block' && $method === 'DELETE') {
+    if ($id === 'block' && $method === 'DELETE') {
         $me = auth_required();
         db()->prepare('DELETE FROM blocked_users WHERE blocker_id = ? AND blocked_id = ?')
             ->execute([$me['id'], $sub]);
         respond(200, ['ok' => true]);
+    }
+
+    // GET /users/:id/posts
+    if ($id === 'posts' && $method === 'GET') {
+        $me = auth_required();
+        $pg = paginate();
+        $stmt = db()->prepare('
+            SELECT p.id, p.user_id, p.type, p.status,
+                   COALESCE(p.content, p.text) AS content,
+                   p.game_id, p.hours_played, p.progress,
+                   p.likes_count, p.comments_count, p.created_at,
+                   g.title AS game_title, g.cover_url AS game_cover,
+                   (SELECT COUNT(*) FROM post_likes WHERE post_id = p.id AND user_id = ?) AS liked_by_me
+            FROM posts p
+            LEFT JOIN games g ON g.id = p.game_id
+            WHERE p.user_id = ?
+            ORDER BY p.created_at DESC
+            LIMIT ? OFFSET ?
+        ');
+        $stmt->execute([$me['id'], $sub, $pg['limit'], $pg['offset']]);
+        $posts = $stmt->fetchAll();
+        foreach ($posts as &$p) { $p['liked_by_me'] = (bool)$p['liked_by_me']; }
+        $total = db()->prepare('SELECT COUNT(*) FROM posts WHERE user_id = ?');
+        $total->execute([$sub]);
+        $count = (int)$total->fetchColumn();
+        respond(200, ['data' => $posts, 'has_more' => ($pg['offset'] + $pg['limit']) < $count]);
+    }
+
+    // GET /users/:id/reviews
+    if ($id === 'reviews' && $method === 'GET') {
+        auth_required();
+        $pg = paginate();
+        $stmt = db()->prepare('
+            SELECT r.*, g.title AS game_title, g.cover_url AS game_cover
+            FROM reviews r JOIN games g ON g.id = r.game_id
+            WHERE r.user_id = ?
+            ORDER BY r.created_at DESC LIMIT ? OFFSET ?
+        ');
+        $stmt->execute([$sub, $pg['limit'], $pg['offset']]);
+        respond(200, ['data' => $stmt->fetchAll()]);
+    }
+
+    // GET /users/:id/lists
+    if ($id === 'lists' && $method === 'GET') {
+        auth_required();
+        $stmt = db()->prepare('SELECT l.*, COUNT(li.id) as items_count FROM game_lists l LEFT JOIN game_list_items li ON li.list_id = l.id WHERE l.user_id = ? AND l.is_public = 1 GROUP BY l.id ORDER BY l.created_at DESC');
+        $stmt->execute([$sub]);
+        respond(200, ['data' => $stmt->fetchAll()]);
     }
 }
 
 // ============================================================
 // NOTIFICATIONS
 // ============================================================
-if ($route === 'notifications') {
+if ($resource === 'notifications') {
 
     // GET /notifications
     if (!$sub && $method === 'GET') {
@@ -1074,306 +1184,58 @@ if ($route === 'notifications') {
     }
 }
 
+// ============================================================
+// COMMUNITIES
+// ============================================================
+if ($resource === 'communities') {
 
-// ─── IGDB HELPER ─────────────────────────────────────────────────────────────
-function igdb_token() {
-    // Cache token em sessão de banco
-    $stmt = db()->prepare("SELECT value, updated_at FROM app_settings WHERE key_name = 'igdb_token' LIMIT 1");
-    $stmt->execute();
-    $row = $stmt->fetch();
-    if ($row && strtotime($row['updated_at']) > time() - 3600 * 24 * 30) {
-        return $row['value'];
-    }
-    $ch = curl_init(TWITCH_AUTH);
-    curl_setopt_array($ch, [
-        CURLOPT_POST => true,
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_POSTFIELDS => http_build_query([
-            'client_id' => TWITCH_CLIENT_ID,
-            'client_secret' => TWITCH_CLIENT_SECRET,
-            'grant_type' => 'client_credentials',
-        ]),
-    ]);
-    $res = json_decode(curl_exec($ch), true);
-    curl_close($ch);
-    $token = $res['access_token'] ?? null;
-    if ($token) {
-        db()->prepare("INSERT INTO app_settings (key_name, value) VALUES ('igdb_token', ?) ON DUPLICATE KEY UPDATE value = ?, updated_at = NOW()")
-            ->execute([$token, $token]);
-    }
-    return $token;
-}
-
-function igdb_request(string $endpoint, string $body): array {
-    $token = igdb_token();
-    $ch = curl_init(IGDB_API . $endpoint);
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_POST => true,
-        CURLOPT_POSTFIELDS => $body,
-        CURLOPT_HTTPHEADER => [
-            'Client-ID: ' . TWITCH_CLIENT_ID,
-            'Authorization: Bearer ' . $token,
-            'Accept: application/json',
-        ],
-    ]);
-    $res = curl_exec($ch);
-    curl_close($ch);
-    return json_decode($res, true) ?? [];
-}
-
-function steam_request(string $url): array {
-    $ch = curl_init($url);
-    curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 10]);
-    $res = curl_exec($ch);
-    curl_close($ch);
-    return json_decode($res, true) ?? [];
-}
-
-// ─── ROUTE: /games/search ────────────────────────────────────────────────────
-if ($resource === 'games' && $sub === 'search' && $method === 'GET') {
-    $q = trim($_GET['q'] ?? '');
-    if (!$q) respond(400, ['error' => 'Parâmetro q obrigatório']);
-
-    // Tenta cache local primeiro
-    $stmt = db()->prepare("SELECT * FROM games WHERE title LIKE ? LIMIT 10");
-    $stmt->execute(["%$q%"]);
-    $cached = $stmt->fetchAll();
-    if (count($cached) >= 3) respond(200, ['data' => $cached, 'source' => 'cache']);
-
-    // Busca no IGDB
-    $results = igdb_request('/games', "search \"$q\"; fields name,slug,cover.url,first_release_date,involved_companies.company.name,rating,summary,genres.name; limit 10;");
-    $games = [];
-    foreach ($results as $g) {
-        $cover = isset($g['cover']['url']) ? 'https:' . str_replace('t_thumb', 't_cover_big', $g['cover']['url']) : null;
-        $games[] = [
-            'id' => 'igdb_' . $g['id'],
-            'title' => $g['name'],
-            'slug' => $g['slug'] ?? '',
-            'cover_url' => $cover,
-            'rawg_rating' => isset($g['rating']) ? round($g['rating'] / 10, 1) : null,
-            'description' => $g['summary'] ?? null,
-            'release_date' => isset($g['first_release_date']) ? date('Y-m-d', $g['first_release_date']) : null,
-            'genres' => array_map(fn($genre) => $genre['name'], $g['genres'] ?? []),
-        ];
-    }
-    respond(200, ['data' => $games, 'source' => 'igdb']);
-}
-
-// ─── ROUTE: /games/trending ──────────────────────────────────────────────────
-if ($resource === 'games' && $sub === 'trending' && $method === 'GET') {
-    // Jogos populares no momento via IGDB
-    $results = igdb_request('/games', 'fields name,slug,cover.url,rating,genres.name,first_release_date; where rating > 75 & first_release_date > ' . strtotime('-1 year') . '; sort rating desc; limit 20;');
-    $games = [];
-    foreach ($results as $g) {
-        $cover = isset($g['cover']['url']) ? 'https:' . str_replace('t_thumb', 't_cover_big', $g['cover']['url']) : null;
-        $games[] = [
-            'id' => 'igdb_' . $g['id'],
-            'title' => $g['name'],
-            'slug' => $g['slug'] ?? '',
-            'cover_url' => $cover,
-            'rawg_rating' => isset($g['rating']) ? round($g['rating'] / 10, 1) : null,
-            'genres' => array_map(fn($genre) => $genre['name'], $g['genres'] ?? []),
-        ];
-    }
-    respond(200, ['data' => $games]);
-}
-
-// ─── ROUTE: /games/steam-top ─────────────────────────────────────────────────
-if ($resource === 'games' && $sub === 'steam-top' && $method === 'GET') {
-    $data = steam_request(STEAM_API . '/ISteamChartsService/GetMostPlayedGames/v1/');
-    $ranks = $data['response']['ranks'] ?? [];
-    $games = [];
-    foreach (array_slice($ranks, 0, 10) as $r) {
-        $appid = $r['appid'];
-        $detail = steam_request(STEAM_STORE_API . "/api/appdetails?appids=$appid&cc=br&l=pt");
-        $info = $detail[$appid]['data'] ?? null;
-        if ($info) {
-            $games[] = [
-                'steam_id' => $appid,
-                'title' => $info['name'],
-                'cover_url' => $info['header_image'] ?? null,
-                'current_players' => $r['concurrent_in_game'] ?? 0,
-                'price' => $info['price_overview']['final_formatted'] ?? 'Grátis',
-            ];
-        }
-    }
-    respond(200, ['data' => $games]);
-}
-
-// ─── ROUTE: /twitch/live ─────────────────────────────────────────────────────
-if ($resource === 'twitch' && $sub === 'live' && $method === 'GET') {
-    // Pega token do Twitch
-    $ch = curl_init(TWITCH_AUTH);
-    curl_setopt_array($ch, [
-        CURLOPT_POST => true,
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_POSTFIELDS => http_build_query([
-            'client_id' => TWITCH_CLIENT_ID,
-            'client_secret' => TWITCH_CLIENT_SECRET,
-            'grant_type' => 'client_credentials',
-        ]),
-    ]);
-    $auth = json_decode(curl_exec($ch), true);
-    curl_close($ch);
-    $token = $auth['access_token'] ?? null;
-
-    $ch2 = curl_init(TWITCH_API . '/streams?first=20&language=pt');
-    curl_setopt_array($ch2, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_HTTPHEADER => [
-            'Client-ID: ' . TWITCH_CLIENT_ID,
-            'Authorization: Bearer ' . $token,
-        ],
-    ]);
-    $res = json_decode(curl_exec($ch2), true);
-    curl_close($ch2);
-    respond(200, ['data' => $res['data'] ?? []]);
-}
-
-// ─── ROUTE: /feed (real) ─────────────────────────────────────────────────────
-if ($resource === 'feed' && !$sub && $method === 'GET') {
-    $me = auth_required();
-    $pg = paginate();
-    $filter = $_GET['filter'] ?? 'all'; // all | following | global
-
-    if ($filter === 'following') {
-        $stmt = db()->prepare('
-            SELECT p.*, COALESCE(p.content, p.text) AS content, u.username, u.display_name, u.avatar_url, u.level,
-                   (SELECT COUNT(*) FROM post_likes WHERE post_id = p.id) AS likes_count,
-                   (SELECT COUNT(*) FROM comments WHERE post_id = p.id) AS comments_count,
-                   (SELECT COUNT(*) FROM post_likes WHERE post_id = p.id AND user_id = ?) AS liked_by_me
-            FROM posts p
-            JOIN users u ON u.id = p.user_id
-            WHERE p.user_id IN (SELECT following_id FROM follows WHERE follower_id = ?)
-            ORDER BY p.created_at DESC LIMIT ? OFFSET ?
-        ');
-        $stmt->execute([$me['id'], $me['id'], $pg['limit'], $pg['offset']]);
-    } else {
-        $stmt = db()->prepare('
-            SELECT p.*, COALESCE(p.content, p.text) AS content, u.username, u.display_name, u.avatar_url, u.level,
-                   (SELECT COUNT(*) FROM post_likes WHERE post_id = p.id) AS likes_count,
-                   (SELECT COUNT(*) FROM comments WHERE post_id = p.id) AS comments_count,
-                   (SELECT COUNT(*) FROM post_likes WHERE post_id = p.id AND user_id = ?) AS liked_by_me
-            FROM posts p
-            JOIN users u ON u.id = p.user_id
-            ORDER BY p.created_at DESC LIMIT ? OFFSET ?
-        ');
-        $stmt->execute([$me['id'], $pg['limit'], $pg['offset']]);
-    }
-    respond(200, ['data' => $stmt->fetchAll()]);
-}
-
-
-// ─── ROUTE: /posts ────────────────────────────────────────────────────────────
-if ($resource === 'posts' && !$sub && $method === 'POST') {
-    $me = auth_required();
-    $b = body();
-    $content = trim($b['content'] ?? $b['text'] ?? '');
-    if (!$content) respond(400, ['error' => 'Conteúdo obrigatório']);
-    $id = uuid();
-    db()->prepare('INSERT INTO posts (id, user_id, content, game_name, game_status, hours_played, created_at, updated_at) VALUES (?,?,?,?,?,?,NOW(),NOW())')
-       ->execute([$id, $me['id'], $content, $b['game_name'] ?? null, $b['game_status'] ?? null, $b['hours_played'] ?? null]);
-    respond(201, ['id' => $id, 'content' => $content]);
-}
-if ($resource === 'posts' && $sub && $id === 'like' && $method === 'POST') {
-    $me = auth_required();
-    try { db()->prepare('INSERT INTO post_likes (id, post_id, user_id, created_at) VALUES (?,?,?,NOW())')->execute([uuid(), $sub, $me['id']]); } catch (PDOException $e) {}
-    respond(200, ['ok' => true]);
-}
-if ($resource === 'posts' && $sub && $id === 'like' && $method === 'DELETE') {
-    $me = auth_required();
-    db()->prepare('DELETE FROM post_likes WHERE post_id = ? AND user_id = ?')->execute([$sub, $me['id']]);
-    respond(200, ['ok' => true]);
-}
-if ($resource === 'posts' && $sub && $id === 'comments' && $method === 'GET') {
-    $me = auth_required();
-    $stmt = db()->prepare('SELECT c.*, u.username, u.display_name, u.avatar_url FROM comments c JOIN users u ON u.id = c.user_id WHERE c.post_id = ? ORDER BY c.created_at ASC LIMIT 50');
-    $stmt->execute([$sub]);
-    respond(200, ['data' => $stmt->fetchAll()]);
-}
-if ($resource === 'posts' && $sub && $id === 'comments' && $method === 'POST') {
-    $me = auth_required();
-    $b = body();
-    $text = trim($b['text'] ?? '');
-    if (!$text) respond(400, ['error' => 'Comentário vazio']);
-    $cid = uuid();
-    db()->prepare('INSERT INTO comments (id, post_id, user_id, content, parent_id, created_at, updated_at) VALUES (?,?,?,?,?,NOW(),NOW())')
-       ->execute([$cid, $sub, $me['id'], $text, $b['parent_id'] ?? null]);
-    respond(201, ['id' => $cid, 'content' => $text]);
-}
-
-// ─── ROUTE: /lists ────────────────────────────────────────────────────────────
-if ($resource === 'lists' && $sub === 'me' && $method === 'GET') {
-    $me = auth_required();
-    $stmt = db()->prepare('SELECT l.*, COUNT(li.id) as items_count FROM game_lists l LEFT JOIN game_list_items li ON li.list_id = l.id WHERE l.user_id = ? GROUP BY l.id ORDER BY l.created_at DESC');
-    $stmt->execute([$me['id']]);
-    respond(200, ['data' => $stmt->fetchAll()]);
-}
-if ($resource === 'lists' && !$sub && $method === 'POST') {
-    $me = auth_required();
-    $b = body();
-    $title = trim($b['title'] ?? '');
-    if (!$title) respond(400, ['error' => 'Título obrigatório']);
-    $lid = uuid();
-    db()->prepare('INSERT INTO game_lists (id, user_id, title, description, list_type, is_public, created_at, updated_at) VALUES (?,?,?,?,?,?,NOW(),NOW())')
-       ->execute([$lid, $me['id'], $title, $b['description'] ?? null, $b['list_type'] ?? 'custom', ($b['is_public'] ?? true) ? 1 : 0]);
-    respond(201, ['id' => $lid, 'title' => $title]);
-}
-if ($resource === 'lists' && $sub && $id === 'items' && $method === 'POST') {
-    $me = auth_required();
-    $b = body();
-    $iid = uuid();
-    db()->prepare('INSERT INTO game_list_items (id, list_id, game_id, notes, position, created_at) VALUES (?,?,?,?,?,NOW())')
-       ->execute([$iid, $sub, $b['game_id'], $b['notes'] ?? null, $b['position'] ?? 0]);
-    respond(201, ['id' => $iid]);
-}
-if ($resource === 'lists' && $sub && $id === 'items' && $action && $method === 'DELETE') {
-    $me = auth_required();
-    db()->prepare('DELETE FROM game_list_items WHERE id = ?')->execute([$action]);
-    respond(200, ['ok' => true]);
-}
-
-// ─── ROUTE: /users/:id/lists ──────────────────────────────────────────────────
-if ($resource === 'users' && $sub && $id === 'lists' && $method === 'GET') {
-    auth_required();
-    $stmt = db()->prepare('SELECT l.*, COUNT(li.id) as items_count FROM game_lists l LEFT JOIN game_list_items li ON li.list_id = l.id WHERE l.user_id = ? AND l.is_public = 1 GROUP BY l.id ORDER BY l.created_at DESC');
-    $stmt->execute([$sub]);
-    respond(200, ['data' => $stmt->fetchAll()]);
-}
-
-
-// ─── ROUTE: /communities ─────────────────────────────────────────────────────
-if ($route === 'communities' || $resource === 'communities') {
-    // Auto-migrate: garante que is_private existe (para tabelas criadas antes desta atualização)
-    static $communities_migrated = false;
-    if (!$communities_migrated) {
-        try { db()->exec("ALTER TABLE communities ADD COLUMN is_private TINYINT(1) DEFAULT 0 AFTER genre"); } catch (PDOException $e) { /* já existe */ }
-        try { db()->exec("ALTER TABLE communities ADD COLUMN game_id VARCHAR(36) AFTER created_by"); } catch (PDOException $e) { /* já existe */ }
-        try { db()->exec("ALTER TABLE communities ADD COLUMN game_title VARCHAR(200) AFTER game_id"); } catch (PDOException $e) { /* já existe */ }
-        $communities_migrated = true;
-    }
     // GET /communities — lista todas
     if ($method === 'GET' && !$sub && !$id) {
         auth_required();
-        $stmt = db()->prepare('SELECT c.*, COUNT(cm.user_id) AS members_count FROM communities c LEFT JOIN community_members cm ON cm.community_id = c.id GROUP BY c.id ORDER BY members_count DESC LIMIT 50');
-        $stmt->execute();
+        $stmt = db()->prepare('
+            SELECT c.*, COUNT(cm.user_id) AS members_count,
+                   (SELECT role FROM community_members WHERE community_id = c.id AND user_id = ?) AS my_role
+            FROM communities c
+            LEFT JOIN community_members cm ON cm.community_id = c.id
+            GROUP BY c.id
+            ORDER BY members_count DESC
+            LIMIT 50
+        ');
+        $stmt->execute([auth_required()['id']]);
         respond(200, ['data' => $stmt->fetchAll()]);
     }
+
     // POST /communities — criar
     if ($method === 'POST' && !$sub && !$id) {
         $me = auth_required();
         $b  = body();
-        if (empty($b['name'])) respond(400, ['error' => 'Nome e obrigatorio']);
-        if (empty($b['description'])) respond(400, ['error' => 'Descricao e obrigatoria']);
+        if (empty($b['name'])) respond(400, ['error' => 'Nome é obrigatório']);
+        if (empty($b['description'])) respond(400, ['error' => 'Descrição é obrigatória']);
 
         $cid  = uuid();
         $slug = $b['slug'] ?? strtolower(trim(preg_replace('/[^A-Za-z0-9-]+/', '-', $b['name'])));
 
-        // Garante slug unico
+        // Garante slug único
         $chk = db()->prepare('SELECT id FROM communities WHERE slug = ? LIMIT 1');
         $chk->execute([$slug]);
         if ($chk->fetch()) $slug = $slug . '-' . substr($cid, 0, 6);
+
+        // Resolve game_id a partir de rawg_id, se fornecido
+        $gameId = null;
+        if (!empty($b['rawg_id'])) {
+            $stmt = db()->prepare('SELECT id FROM games WHERE rawg_id = ?');
+            $stmt->execute([$b['rawg_id']]);
+            $existing = $stmt->fetch();
+            if ($existing) {
+                $gameId = $existing['id'];
+            } else {
+                $gameId = uuid();
+                db()->prepare('INSERT INTO games (id, rawg_id, title) VALUES (?, ?, ?)')
+                   ->execute([$gameId, $b['rawg_id'], $b['game_title'] ?? '']);
+            }
+        } elseif (!empty($b['game_id'])) {
+            $gameId = $b['game_id']; // assume que é UUID válido
+        }
 
         try {
             db()->prepare('
@@ -1390,152 +1252,583 @@ if ($route === 'communities' || $resource === 'communities') {
                 $b['genre']      ?? null,
                 isset($b['is_private']) ? (int)$b['is_private'] : 0,
                 $me['id'],
-                $b['game_id']    ?? null,
+                $gameId,
                 $b['game_title'] ?? null,
             ]);
         } catch (PDOException $e) {
             respond(500, ['error' => 'Erro ao criar comunidade: ' . $e->getMessage()]);
         }
 
+        // Adiciona criador como owner
         try {
             db()->prepare('INSERT INTO community_members (community_id, user_id, role, joined_at) VALUES (?,?,"owner",NOW())')
                ->execute([$cid, $me['id']]);
-        } catch (PDOException $e) { /* ignora se tabela nao existir */ }
+        } catch (PDOException $e) {}
 
         respond(201, ['id' => $cid, 'slug' => $slug, 'name' => trim($b['name'])]);
-    }    // GET /communities/:id — detalhes
-    if ($method === 'GET' && ($sub || $id)) {
-        $cid = $sub ?? $id;
-        auth_required();
-        $stmt = db()->prepare('SELECT c.*, COUNT(cm.user_id) AS members_count FROM communities c LEFT JOIN community_members cm ON cm.community_id = c.id WHERE c.id = ? GROUP BY c.id');
-        $stmt->execute([$cid]);
+    }
+
+    // GET /communities/:id — detalhes
+    if ($method === 'GET' && $sub && !$id) {
+        $me = auth_required();
+        $stmt = db()->prepare('
+            SELECT c.*, COUNT(cm.user_id) AS members_count,
+                   (SELECT role FROM community_members WHERE community_id = c.id AND user_id = ?) AS my_role
+            FROM communities c
+            LEFT JOIN community_members cm ON cm.community_id = c.id
+            WHERE c.id = ?
+            GROUP BY c.id
+        ');
+        $stmt->execute([$me['id'], $sub]);
         $c = $stmt->fetch();
         if (!$c) respond(404, ['error' => 'Comunidade não encontrada']);
         respond(200, $c);
     }
+
     // POST /communities/:id/join
-    if ($method === 'POST' && $id === 'join') {
+    if ($id === 'join' && $method === 'POST') {
         $me = auth_required();
-        $cid = $sub;
         try {
-            db()->prepare('INSERT INTO community_members (community_id, user_id, role, joined_at) VALUES (?,?,"member",NOW())')->execute([$cid, $me['id']]);
+            db()->prepare('INSERT INTO community_members (community_id, user_id, role, joined_at) VALUES (?,?,"member",NOW())')
+               ->execute([$sub, $me['id']]);
         } catch (PDOException $e) {}
         respond(200, ['ok' => true]);
     }
+
     // DELETE /communities/:id/join
-    if ($method === 'DELETE' && $id === 'join') {
+    if ($id === 'join' && $method === 'DELETE') {
         $me = auth_required();
-        db()->prepare('DELETE FROM community_members WHERE community_id = ? AND user_id = ?')->execute([$sub, $me['id']]);
+        db()->prepare('DELETE FROM community_members WHERE community_id = ? AND user_id = ?')
+           ->execute([$sub, $me['id']]);
         respond(200, ['ok' => true]);
     }
 }
 
-// ─── ROUTE: /users/:id/posts ─────────────────────────────────────────────────
-if ($route === 'users' && $id === 'posts' && $method === 'GET') {
-    $me = auth_required();
-    $pg = paginate();
-    $stmt = db()->prepare('
-        SELECT p.id, p.user_id, p.type, p.status,
-               COALESCE(p.content, p.text) AS content,
-               p.game_id, p.hours_played, p.progress,
-               p.likes_count, p.comments_count, p.created_at,
-               g.title AS game_title, g.cover_url AS game_cover,
-               (SELECT COUNT(*) FROM post_likes WHERE post_id = p.id AND user_id = ?) AS liked_by_me
-        FROM posts p
-        LEFT JOIN games g ON g.id = p.game_id
-        WHERE p.user_id = ?
-        ORDER BY p.created_at DESC
-        LIMIT ? OFFSET ?
-    ');
-    $stmt->execute([$me['id'], $sub, $pg['limit'], $pg['offset']]);
-    $posts = $stmt->fetchAll();
-    foreach ($posts as &$p) { $p['liked_by_me'] = (bool)$p['liked_by_me']; }
-    $total = db()->prepare('SELECT COUNT(*) FROM posts WHERE user_id = ?');
-    $total->execute([$sub]);
-    $count = (int)$total->fetchColumn();
-    respond(200, ['data' => $posts, 'has_more' => ($pg['offset'] + $pg['limit']) < $count]);
-}
+// ============================================================
+// TOPICS (tópicos de comunidade)
+// ============================================================
+if ($resource === 'topics') {
 
-// ─── ROUTE: /users/:id/reviews ────────────────────────────────────────────────
-if ($route === 'users' && $id === 'reviews' && $method === 'GET') {
-    auth_required();
-    $pg = paginate();
-    $stmt = db()->prepare('
-        SELECT r.*, g.title AS game_title, g.cover_url AS game_cover
-        FROM reviews r JOIN games g ON g.id = r.game_id
-        WHERE r.user_id = ?
-        ORDER BY r.created_at DESC LIMIT ? OFFSET ?
-    ');
-    $stmt->execute([$sub, $pg['limit'], $pg['offset']]);
-    respond(200, ['data' => $stmt->fetchAll()]);
-}
-
-// ─── ROUTE: /users/:id/lists ──────────────────────────────────────────────────
-if ($route === 'users' && $id === 'lists' && $method === 'GET') {
-    auth_required();
-    $stmt = db()->prepare('SELECT l.*, COUNT(li.id) as items_count FROM game_lists l LEFT JOIN game_list_items li ON li.list_id = l.id WHERE l.user_id = ? AND l.is_public = 1 GROUP BY l.id ORDER BY l.created_at DESC');
-    $stmt->execute([$sub]);
-    respond(200, ['data' => $stmt->fetchAll()]);
-}
-
-// ─── ROUTE: /lists ────────────────────────────────────────────────────────────
-if ($route === 'lists') {
-    // GET /lists/me
-    if ($sub === 'me' && $method === 'GET') {
+    // GET /topics?community_id=xxx&sort=...
+    if ($method === 'GET' && !$sub) {
         $me = auth_required();
-        $stmt = db()->prepare('SELECT l.*, COUNT(li.id) as items_count FROM game_lists l LEFT JOIN game_list_items li ON li.list_id = l.id WHERE l.user_id = ? GROUP BY l.id ORDER BY l.created_at DESC');
-        $stmt->execute([$me['id']]);
-        respond(200, ['data' => $stmt->fetchAll()]);
+        $communityId = $_GET['community_id'] ?? '';
+        $sort = $_GET['sort'] ?? 'activity';
+        $pg = paginate();
+
+        if (!$communityId) respond(400, ['error' => 'community_id é obrigatório']);
+
+        // Verifica se o usuário é membro (se a comunidade for privada)
+        $check = db()->prepare('SELECT is_private FROM communities WHERE id = ?');
+        $check->execute([$communityId]);
+        $comm = $check->fetch();
+        if (!$comm) respond(404, ['error' => 'Comunidade não encontrada']);
+
+        if ($comm['is_private']) {
+            $member = db()->prepare('SELECT id FROM community_members WHERE community_id = ? AND user_id = ?');
+            $member->execute([$communityId, $me['id']]);
+            if (!$member->fetch()) respond(403, ['error' => 'Você não é membro desta comunidade']);
+        }
+
+        $orderBy = 't.created_at DESC';
+        if ($sort === 'activity') $orderBy = 't.last_reply_at DESC';
+        elseif ($sort === 'top') $orderBy = 't.likes_count DESC';
+
+        $stmt = db()->prepare("
+            SELECT t.*, u.username, u.display_name, u.avatar_url,
+                   (SELECT COUNT(*) FROM topic_likes WHERE topic_id = t.id AND user_id = ?) AS is_liked
+            FROM topics t
+            JOIN users u ON u.id = t.user_id
+            WHERE t.community_id = ?
+            ORDER BY t.is_pinned DESC, $orderBy
+            LIMIT ? OFFSET ?
+        ");
+        $stmt->execute([$me['id'], $communityId, $pg['limit'], $pg['offset']]);
+        $topics = $stmt->fetchAll();
+        foreach ($topics as &$t) {
+            $t['is_liked'] = (bool)$t['is_liked'];
+        }
+        respond(200, ['data' => $topics]);
     }
-    // POST /lists
+
+    // POST /topics — criar novo tópico
+    if ($method === 'POST' && !$sub) {
+        $me = auth_required();
+        $b = body();
+        required_fields($b, ['community_id', 'title', 'body']);
+
+        // Verifica permissão (membro da comunidade)
+        $member = db()->prepare('SELECT role FROM community_members WHERE community_id = ? AND user_id = ?');
+        $member->execute([$b['community_id'], $me['id']]);
+        $roleRow = $member->fetch();
+        if (!$roleRow) respond(403, ['error' => 'Você não é membro desta comunidade']);
+
+        $tid = uuid();
+        db()->prepare('
+            INSERT INTO topics (id, community_id, user_id, title, body, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, NOW(), NOW())
+        ')->execute([$tid, $b['community_id'], $me['id'], $b['title'], $b['body']]);
+
+        // Incrementa contador de tópicos na comunidade
+        db()->prepare('UPDATE communities SET topics_count = topics_count + 1 WHERE id = ?')
+            ->execute([$b['community_id']]);
+
+        respond(201, ['id' => $tid, 'title' => $b['title']]);
+    }
+
+    // GET /topics/:id — detalhe do tópico
+    if ($method === 'GET' && $sub && !$id) {
+        $me = auth_required();
+        $stmt = db()->prepare('
+            SELECT t.*, u.username, u.display_name, u.avatar_url, u.id AS user_id,
+                   c.name AS community_name, c.is_private,
+                   (SELECT COUNT(*) FROM topic_likes WHERE topic_id = t.id AND user_id = ?) AS is_liked
+            FROM topics t
+            JOIN users u ON u.id = t.user_id
+            JOIN communities c ON c.id = t.community_id
+            WHERE t.id = ?
+        ');
+        $stmt->execute([$me['id'], $sub]);
+        $topic = $stmt->fetch();
+        if (!$topic) respond(404, ['error' => 'Tópico não encontrado']);
+
+        // Incrementa visualização
+        db()->prepare('UPDATE topics SET views_count = views_count + 1 WHERE id = ?')->execute([$sub]);
+
+        $topic['is_liked'] = (bool)$topic['is_liked'];
+
+        // Inclui replies diretamente na resposta (evita segunda requisição do cliente)
+        $repliesStmt = db()->prepare('
+            SELECT r.*, u.username, u.display_name, u.avatar_url,
+                   (SELECT COUNT(*) FROM reply_likes WHERE reply_id = r.id AND user_id = ?) AS is_liked,
+                   cm.role AS user_role
+            FROM topic_replies r
+            JOIN users u ON u.id = r.user_id
+            LEFT JOIN community_members cm ON cm.community_id = ? AND cm.user_id = r.user_id
+            WHERE r.topic_id = ? AND r.parent_id IS NULL
+            ORDER BY r.created_at ASC
+        ');
+        $repliesStmt->execute([$me['id'], $topic['community_id'], $sub]);
+        $replies = $repliesStmt->fetchAll();
+        foreach ($replies as &$r) {
+            $r['is_liked'] = (bool)$r['is_liked'];
+            $r['likes_count'] = (int)$r['likes_count'];
+            $r['is_removed'] = (bool)($r['is_removed'] ?? false);
+            // Replies aninhadas
+            $child = db()->prepare('
+                SELECT r2.*, u2.username, u2.display_name, u2.avatar_url,
+                       (SELECT COUNT(*) FROM reply_likes WHERE reply_id = r2.id AND user_id = ?) AS is_liked,
+                       cm2.role AS user_role
+                FROM topic_replies r2
+                JOIN users u2 ON u2.id = r2.user_id
+                LEFT JOIN community_members cm2 ON cm2.community_id = ? AND cm2.user_id = r2.user_id
+                WHERE r2.parent_id = ?
+                ORDER BY r2.created_at ASC
+            ');
+            $child->execute([$me['id'], $topic['community_id'], $r['id']]);
+            $r['replies'] = $child->fetchAll();
+        }
+
+        respond(200, array_merge($topic, ['replies' => $replies]));
+    }
+
+    // PATCH /topics/:id — editar (apenas autor ou moderador)
+    if ($method === 'PATCH' && $sub && !$id) {
+        $me = auth_required();
+        $b = body();
+
+        $topic = db()->prepare('SELECT user_id, community_id FROM topics WHERE id = ?');
+        $topic->execute([$sub]);
+        $t = $topic->fetch();
+        if (!$t) respond(404, ['error' => 'Tópico não encontrado']);
+
+        // Verifica permissão
+        $role = db()->prepare('SELECT role FROM community_members WHERE community_id = ? AND user_id = ?');
+        $role->execute([$t['community_id'], $me['id']]);
+        $r = $role->fetch();
+        $isMod = $r && in_array($r['role'], ['mod', 'admin', 'owner']);
+        if ($t['user_id'] !== $me['id'] && !$isMod) respond(403, ['error' => 'Sem permissão']);
+
+        $allowed = ['title', 'body'];
+        $sets = []; $params = [];
+        foreach ($allowed as $f) {
+            if (array_key_exists($f, $b)) { $sets[] = "$f = ?"; $params[] = $b[$f]; }
+        }
+        if (!$sets) respond(422, ['error' => 'Nada para atualizar']);
+        $params[] = $sub;
+        db()->prepare('UPDATE topics SET ' . implode(', ', $sets) . ' WHERE id = ?')->execute($params);
+        respond(200, ['ok' => true]);
+    }
+
+    // DELETE /topics/:id — remover (apenas autor ou moderador)
+    if ($method === 'DELETE' && $sub && !$id) {
+        $me = auth_required();
+        $topic = db()->prepare('SELECT user_id, community_id FROM topics WHERE id = ?');
+        $topic->execute([$sub]);
+        $t = $topic->fetch();
+        if (!$t) respond(404, ['error' => 'Tópico não encontrado']);
+
+        $role = db()->prepare('SELECT role FROM community_members WHERE community_id = ? AND user_id = ?');
+        $role->execute([$t['community_id'], $me['id']]);
+        $r = $role->fetch();
+        $isMod = $r && in_array($r['role'], ['mod', 'admin', 'owner']);
+        if ($t['user_id'] !== $me['id'] && !$isMod) respond(403, ['error' => 'Sem permissão']);
+
+        db()->prepare('DELETE FROM topics WHERE id = ?')->execute([$sub]);
+        db()->prepare('UPDATE communities SET topics_count = topics_count - 1 WHERE id = ?')
+            ->execute([$t['community_id']]);
+        respond(200, ['ok' => true]);
+    }
+
+    // POST /topics/:id/like
+    if ($id === 'like' && $method === 'POST') {
+        $me = auth_required();
+        try {
+            db()->prepare('INSERT INTO topic_likes (user_id, topic_id) VALUES (?,?)')->execute([$me['id'], $sub]);
+            db()->prepare('UPDATE topics SET likes_count = likes_count + 1 WHERE id = ?')->execute([$sub]);
+        } catch (PDOException $e) {}
+        respond(200, ['ok' => true]);
+    }
+
+    // DELETE /topics/:id/like
+    if ($id === 'like' && $method === 'DELETE') {
+        $me = auth_required();
+        $del = db()->prepare('DELETE FROM topic_likes WHERE user_id = ? AND topic_id = ?');
+        $del->execute([$me['id'], $sub]);
+        if ($del->rowCount() > 0) {
+            db()->prepare('UPDATE topics SET likes_count = GREATEST(likes_count - 1, 0) WHERE id = ?')->execute([$sub]);
+        }
+        respond(200, ['ok' => true]);
+    }
+
+    // PATCH /topics/:id/pin — fixar/desafixar (moderadores)
+    if ($id === 'pin' && $method === 'PATCH') {
+        $me = auth_required();
+        $topic = db()->prepare('SELECT community_id, is_pinned FROM topics WHERE id = ?');
+        $topic->execute([$sub]);
+        $t = $topic->fetch();
+        if (!$t) respond(404, ['error' => 'Tópico não encontrado']);
+
+        $role = db()->prepare('SELECT role FROM community_members WHERE community_id = ? AND user_id = ?');
+        $role->execute([$t['community_id'], $me['id']]);
+        $r = $role->fetch();
+        if (!$r || !in_array($r['role'], ['mod', 'admin', 'owner'])) respond(403, ['error' => 'Sem permissão']);
+
+        $newPin = $t['is_pinned'] ? 0 : 1;
+        db()->prepare('UPDATE topics SET is_pinned = ? WHERE id = ?')->execute([$newPin, $sub]);
+        respond(200, ['is_pinned' => (bool)$newPin]);
+    }
+
+    // ========== REPLIES (respostas) ==========
+    // GET /topics/:id/replies
+    if ($id === 'replies' && $method === 'GET') {
+        $me = auth_required();
+        $pg = paginate();
+        $stmt = db()->prepare('
+            SELECT r.*, u.username, u.display_name, u.avatar_url,
+                   (SELECT COUNT(*) FROM reply_likes WHERE reply_id = r.id AND user_id = ?) AS is_liked
+            FROM topic_replies r
+            JOIN users u ON u.id = r.user_id
+            WHERE r.topic_id = ? AND r.parent_id IS NULL
+            ORDER BY r.created_at ASC
+            LIMIT ? OFFSET ?
+        ');
+        $stmt->execute([$me['id'], $sub, $pg['limit'], $pg['offset']]);
+        $replies = $stmt->fetchAll();
+
+        // Buscar respostas aninhadas (filhas)
+        foreach ($replies as &$r) {
+            $child = db()->prepare('
+                SELECT r.*, u.username, u.display_name, u.avatar_url,
+                       (SELECT COUNT(*) FROM reply_likes WHERE reply_id = r.id AND user_id = ?) AS is_liked
+                FROM topic_replies r
+                JOIN users u ON u.id = r.user_id
+                WHERE r.parent_id = ?
+                ORDER BY r.created_at ASC
+            ');
+            $child->execute([$me['id'], $r['id']]);
+            $r['replies'] = $child->fetchAll();
+        }
+        respond(200, ['data' => $replies]);
+    }
+
+    // POST /topics/:id/replies — criar resposta
+    if ($id === 'replies' && $method === 'POST') {
+        $me = auth_required();
+        $b = body();
+        required_fields($b, ['body']);
+
+        $topic = db()->prepare('SELECT community_id FROM topics WHERE id = ?');
+        $topic->execute([$sub]);
+        $t = $topic->fetch();
+        if (!$t) respond(404, ['error' => 'Tópico não encontrado']);
+
+        // Verifica se é membro
+        $member = db()->prepare('SELECT id FROM community_members WHERE community_id = ? AND user_id = ?');
+        $member->execute([$t['community_id'], $me['id']]);
+        if (!$member->fetch()) respond(403, ['error' => 'Você não é membro desta comunidade']);
+
+        $rid = uuid();
+        db()->prepare('
+            INSERT INTO topic_replies (id, topic_id, user_id, body, parent_id, created_at)
+            VALUES (?, ?, ?, ?, ?, NOW())
+        ')->execute([$rid, $sub, $me['id'], $b['body'], $b['parent_id'] ?? null]);
+
+        db()->prepare('UPDATE topics SET replies_count = replies_count + 1, last_reply_at = NOW() WHERE id = ?')
+            ->execute([$sub]);
+
+        respond(201, ['id' => $rid]);
+    }
+
+    // POST /topics/:id/replies/:replyId/like
+    if ($id === 'replies' && $action && $method === 'POST') {
+        $me = auth_required();
+        $replyId = $action;
+        try {
+            db()->prepare('INSERT INTO reply_likes (user_id, reply_id) VALUES (?,?)')->execute([$me['id'], $replyId]);
+            db()->prepare('UPDATE topic_replies SET likes_count = likes_count + 1 WHERE id = ?')->execute([$replyId]);
+        } catch (PDOException $e) {}
+        respond(200, ['ok' => true]);
+    }
+
+    // DELETE /topics/:id/replies/:replyId/like
+    if ($id === 'replies' && $action && $method === 'DELETE') {
+        $me = auth_required();
+        $replyId = $action;
+        $del = db()->prepare('DELETE FROM reply_likes WHERE user_id = ? AND reply_id = ?');
+        $del->execute([$me['id'], $replyId]);
+        if ($del->rowCount() > 0) {
+            db()->prepare('UPDATE topic_replies SET likes_count = GREATEST(likes_count - 1, 0) WHERE id = ?')->execute([$replyId]);
+        }
+        respond(200, ['ok' => true]);
+    }
+
+    // DELETE /topics/:id/replies/:replyId — remover resposta (autor ou mod)
+    if ($id === 'replies' && $action && $method === 'DELETE') {
+        $me = auth_required();
+        $replyId = $action;
+        $reply = db()->prepare('SELECT user_id, topic_id FROM topic_replies WHERE id = ?');
+        $reply->execute([$replyId]);
+        $r = $reply->fetch();
+        if (!$r) respond(404, ['error' => 'Resposta não encontrada']);
+
+        $topic = db()->prepare('SELECT community_id FROM topics WHERE id = ?');
+        $topic->execute([$r['topic_id']]);
+        $t = $topic->fetch();
+
+        $role = db()->prepare('SELECT role FROM community_members WHERE community_id = ? AND user_id = ?');
+        $role->execute([$t['community_id'], $me['id']]);
+        $roleRow = $role->fetch();
+        $isMod = $roleRow && in_array($roleRow['role'], ['mod', 'admin', 'owner']);
+
+        if ($r['user_id'] !== $me['id'] && !$isMod) respond(403, ['error' => 'Sem permissão']);
+
+        db()->prepare('DELETE FROM topic_replies WHERE id = ?')->execute([$replyId]);
+        db()->prepare('UPDATE topics SET replies_count = GREATEST(replies_count - 1, 0) WHERE id = ?')
+            ->execute([$r['topic_id']]);
+        respond(200, ['ok' => true]);
+    }
+}
+
+    // POST /topics/replies/:replyId/like  (rota que o frontend usa)
+    if ($sub === 'replies' && $id && $action === 'like' && $method === 'POST') {
+        $me = auth_required();
+        validate_id($id, 'Reply ID');
+        try {
+            db()->prepare('INSERT INTO reply_likes (user_id, reply_id) VALUES (?,?)')->execute([$me['id'], $id]);
+            db()->prepare('UPDATE topic_replies SET likes_count = likes_count + 1 WHERE id = ?')->execute([$id]);
+        } catch (PDOException $e) {}
+        respond(200, ['ok' => true]);
+    }
+
+    // DELETE /topics/replies/:replyId/like  (unlike)
+    if ($sub === 'replies' && $id && $action === 'like' && $method === 'DELETE') {
+        $me = auth_required();
+        validate_id($id, 'Reply ID');
+        $del = db()->prepare('DELETE FROM reply_likes WHERE user_id = ? AND reply_id = ?');
+        $del->execute([$me['id'], $id]);
+        if ($del->rowCount() > 0) {
+            db()->prepare('UPDATE topic_replies SET likes_count = GREATEST(likes_count - 1, 0) WHERE id = ?')->execute([$id]);
+        }
+        respond(200, ['ok' => true]);
+    }
+
+    // DELETE /topics/replies/:replyId  (remover resposta — autor ou mod)
+    if ($sub === 'replies' && $id && !$action && $method === 'DELETE') {
+        $me = auth_required();
+        validate_id($id, 'Reply ID');
+        $reply = db()->prepare('SELECT user_id, topic_id FROM topic_replies WHERE id = ?');
+        $reply->execute([$id]);
+        $r = $reply->fetch();
+        if (!$r) respond(404, ['error' => 'Resposta não encontrada']);
+
+        $topic = db()->prepare('SELECT community_id FROM topics WHERE id = ?');
+        $topic->execute([$r['topic_id']]);
+        $t = $topic->fetch();
+
+        $role = db()->prepare('SELECT role FROM community_members WHERE community_id = ? AND user_id = ?');
+        $role->execute([$t['community_id'], $me['id']]);
+        $roleRow = $role->fetch();
+        $isMod = $roleRow && in_array($roleRow['role'], ['mod', 'admin', 'owner']);
+
+        if ($r['user_id'] !== $me['id'] && !$isMod) respond(403, ['error' => 'Sem permissão']);
+
+        db()->prepare('UPDATE topic_replies SET is_removed = 1 WHERE id = ?')->execute([$id]);
+        db()->prepare('UPDATE topics SET replies_count = GREATEST(replies_count - 1, 0) WHERE id = ?')
+            ->execute([$r['topic_id']]);
+        respond(200, ['ok' => true]);
+    }
+}
+
+// ============================================================
+// MESSAGES
+// ============================================================
+if ($resource === 'messages') {
+
+    // GET /messages — lista conversas (query otimizada sem subquery correlacionada)
+    if (!$sub && $method === 'GET') {
+        $me = auth_required();
+        // Passo 1: encontrar a última mensagem de cada conversa de forma eficiente
+        $stmt = db()->prepare('
+            SELECT
+                LEAST(m.sender_id, m.receiver_id)    AS user_a,
+                GREATEST(m.sender_id, m.receiver_id) AS user_b,
+                MAX(m.created_at) AS last_at
+            FROM messages m
+            WHERE m.sender_id = ? OR m.receiver_id = ?
+            GROUP BY user_a, user_b
+        ');
+        $stmt->execute([$me['id'], $me['id']]);
+        $pairs = $stmt->fetchAll();
+
+        $conversations = [];
+        foreach ($pairs as $pair) {
+            $otherId = ($pair['user_a'] === $me['id']) ? $pair['user_b'] : $pair['user_a'];
+            // Buscar a mensagem mais recente desta conversa
+            $msgStmt = db()->prepare('
+                SELECT m.id, m.body AS last_message, m.created_at AS last_message_at,
+                       u.username AS other_username, u.display_name AS other_name, u.avatar_url AS other_avatar
+                FROM messages m
+                JOIN users u ON u.id = ?
+                WHERE ((m.sender_id = ? AND m.receiver_id = ?) OR (m.sender_id = ? AND m.receiver_id = ?))
+                  AND m.created_at = ?
+                LIMIT 1
+            ');
+            $msgStmt->execute([$otherId, $me['id'], $otherId, $otherId, $me['id'], $pair['last_at']]);
+            $msg = $msgStmt->fetch();
+            if (!$msg) continue;
+
+            // Contar não lidas desta conversa
+            $unread = db()->prepare('SELECT COUNT(*) FROM messages WHERE receiver_id = ? AND sender_id = ? AND is_read = 0');
+            $unread->execute([$me['id'], $otherId]);
+            $msg['other_id']    = $otherId;
+            $msg['unread_count'] = (int)$unread->fetchColumn();
+            $conversations[] = $msg;
+        }
+
+        // Ordena por última mensagem desc
+        usort($conversations, fn($a, $b) => strcmp($b['last_message_at'], $a['last_message_at']));
+        respond(200, ['data' => $conversations]);
+    }
+
+    // GET /messages/conversation/:userId — histórico com um usuário
+    if ($sub === 'conversation' && $id && $method === 'GET') {
+        $me = auth_required();
+        $pg = paginate();
+        $stmt = db()->prepare('
+            SELECT m.*, u.username AS sender_username, u.avatar_url AS sender_avatar
+            FROM messages m
+            JOIN users u ON u.id = m.sender_id
+            WHERE (m.sender_id = ? AND m.receiver_id = ?)
+               OR (m.sender_id = ? AND m.receiver_id = ?)
+            ORDER BY m.created_at DESC
+            LIMIT ? OFFSET ?
+        ');
+        $stmt->execute([$me['id'], $sub, $sub, $me['id'], $pg['limit'], $pg['offset']]);
+        $msgs = array_reverse($stmt->fetchAll());
+
+        db()->prepare('UPDATE messages SET is_read = 1 WHERE receiver_id = ? AND sender_id = ?')
+           ->execute([$me['id'], $sub]);
+
+        respond(200, ['data' => $msgs]);
+    }
+
+    // POST /messages — enviar mensagem
     if (!$sub && $method === 'POST') {
         $me = auth_required();
-        $b = body();
-        if (empty($b['title'])) respond(422, ['error' => 'Título obrigatório']);
-        $lid = uuid();
+        $b  = body();
+
+        // Aceita vários nomes de campo
+        $toId = $b['to_user_id'] ?? $b['receiver_id'] ?? $b['recipient_id'] ?? null;
+        $body = $b['body'] ?? $b['message'] ?? $b['content'] ?? null;
+
+        if (!$toId) respond(400, ['error' => 'Destinatário obrigatório (to_user_id)']);
+        if (!$body) respond(400, ['error' => 'Mensagem vazia']);
+        if ($toId === $me['id']) respond(400, ['error' => 'Não pode enviar mensagem para si mesmo']);
+
+        $dest = db()->prepare('SELECT id FROM users WHERE id = ? AND is_active = 1 LIMIT 1');
+        $dest->execute([$toId]);
+        if (!$dest->fetch()) respond(404, ['error' => 'Destinatário não encontrado']);
+
+        $mid = uuid();
         try {
-            db()->prepare('INSERT INTO game_lists (id, user_id, title, description, list_type, is_public, created_at, updated_at) VALUES (?,?,?,?,?,?,NOW(),NOW())')
-               ->execute([$lid, $me['id'], trim($b['title']), $b['description'] ?? null, $b['list_type'] ?? 'custom', isset($b['is_public']) ? (int)$b['is_public'] : 1]);
+            db()->prepare('
+                INSERT INTO messages (id, sender_id, receiver_id, body, is_read, created_at)
+                VALUES (?, ?, ?, ?, 0, NOW())
+            ')->execute([$mid, $me['id'], $toId, trim($body)]);
         } catch (PDOException $e) {
-            respond(500, ['error' => 'Erro ao criar lista: ' . $e->getMessage()]);
+            respond(500, ['error' => 'Erro ao enviar mensagem: ' . $e->getMessage()]);
         }
-        respond(201, ['id' => $lid, 'title' => trim($b['title'])]);
-    }
-    // POST /lists/:id/items
-    if ($sub && $id === 'items' && $method === 'POST') {
-        $me = auth_required();
-        $b = body();
-        $iid = uuid();
-        db()->prepare('INSERT INTO game_list_items (id, list_id, game_id, notes, position, created_at) VALUES (?,?,?,?,?,NOW())')
-           ->execute([$iid, $sub, $b['game_id'], $b['notes'] ?? null, $b['position'] ?? 0]);
-        respond(201, ['id' => $iid]);
-    }
-    // DELETE /lists/:id/items/:itemId
-    if ($sub && $id === 'items' && $action && $method === 'DELETE') {
-        $me = auth_required();
-        db()->prepare('DELETE FROM game_list_items WHERE id = ?')->execute([$action]);
-        respond(200, ['ok' => true]);
-    }
-    // PATCH /lists/:id
-    if ($sub && !$id && $method === 'PATCH') {
-        $me = auth_required();
-        $b = body();
-        $allowed = ['title', 'description', 'is_public', 'list_type'];
-        $sets = []; $params = [];
-        foreach ($allowed as $f) { if (array_key_exists($f, $b)) { $sets[] = "$f = ?"; $params[] = $b[$f]; } }
-        if ($sets) { $params[] = $sub; $params[] = $me['id']; db()->prepare('UPDATE game_lists SET ' . implode(', ', $sets) . ' WHERE id = ? AND user_id = ?')->execute($params); }
-        respond(200, ['ok' => true]);
-    }
-    // DELETE /lists/:id
-    if ($sub && !$id && $method === 'DELETE') {
-        $me = auth_required();
-        db()->prepare('DELETE FROM game_lists WHERE id = ? AND user_id = ?')->execute([$sub, $me['id']]);
-        respond(200, ['ok' => true]);
+
+        respond(201, ['id' => $mid, 'body' => trim($body), 'sender_id' => $me['id'], 'receiver_id' => $toId]);
     }
 }
 
-// ─── ROUTE: /stories ──────────────────────────────────────────────────────────
-if ($route === 'stories') {
+// ============================================================
+// UPLOAD
+// ============================================================
+if ($resource === 'upload' && $method === 'POST') {
+    $me = auth_required();
+    $b  = body();
+
+    $base64 = $b['image_base64'] ?? $b['base64'] ?? null;
+    if (!$base64) respond(400, ['error' => 'Campo image_base64 obrigatório']);
+
+    $decoded = base64_decode($base64, true);
+    if ($decoded === false) respond(400, ['error' => 'Base64 inválido']);
+    if (strlen($decoded) > 2 * 1024 * 1024) respond(422, ['error' => 'Imagem muito grande. Máximo 2 MB.']);
+
+    // Valida MIME real com finfo (não apenas extensão pelos primeiros bytes)
+    $allowedMimes = ['image/jpeg' => 'jpg', 'image/png' => 'png', 'image/gif' => 'gif', 'image/webp' => 'webp'];
+    $finfo = new finfo(FILEINFO_MIME_TYPE);
+    $mimeType = $finfo->buffer($decoded);
+    if (!isset($allowedMimes[$mimeType])) {
+        respond(422, ['error' => 'Tipo de arquivo não permitido. Envie JPG, PNG, GIF ou WebP.']);
+    }
+    $ext = $allowedMimes[$mimeType];
+
+    $uploadDir = __DIR__ . '/uploads/';
+    if (!is_dir($uploadDir)) mkdir($uploadDir, 0755, true);
+
+    $filename = uuid() . '.' . $ext;
+    $filepath = $uploadDir . $filename;
+
+    if (file_put_contents($filepath, $decoded) === false) {
+        respond(500, ['error' => 'Erro ao salvar imagem no servidor']);
+    }
+
+    $proto    = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+    $host     = $_SERVER['HTTP_HOST'] ?? 'wilkenperez.com';
+    $basePath = '/backlog-network-api/uploads/';
+    $url      = $proto . '://' . $host . $basePath . $filename;
+
+    respond(201, ['url' => $url, 'image_url' => $url, 'filename' => $filename]);
+}
+
+// ============================================================
+// STORIES
+// ============================================================
+if ($resource === 'stories') {
     // GET /stories
     if (!$sub && $method === 'GET') {
         $me = auth_required();
@@ -1554,6 +1847,7 @@ if ($route === 'stories') {
         foreach ($stories as &$s) { $s['viewed_by_me'] = (bool)$s['viewed_by_me']; }
         respond(200, $stories);
     }
+
     // POST /stories
     if (!$sub && $method === 'POST') {
         $me = auth_required();
@@ -1568,12 +1862,14 @@ if ($route === 'stories') {
         }
         respond(201, ['id' => $sid]);
     }
+
     // POST /stories/:id/view
     if ($sub && $id === 'view' && $method === 'POST') {
         $me = auth_required();
         try { db()->prepare('INSERT IGNORE INTO story_views (id, story_id, user_id, created_at) VALUES (?,?,?,NOW())')->execute([uuid(), $sub, $me['id']]); } catch (PDOException $e) {}
         respond(200, ['ok' => true]);
     }
+
     // DELETE /stories/:id
     if ($sub && !$id && $method === 'DELETE') {
         $me = auth_required();
@@ -1582,132 +1878,215 @@ if ($route === 'stories') {
     }
 }
 
-// ─── ROUTE: /upload ──────────────────────────────────────────────────────────
-if ($route === 'upload' && $method === 'POST') {
-    $me = auth_required();
-    $b  = body();
+// ============================================================
+// LISTS
+// ============================================================
+if ($resource === 'lists') {
 
-    $base64 = $b['image_base64'] ?? $b['base64'] ?? null;
-    if (!$base64) respond(400, ['error' => 'Campo image_base64 obrigatorio']);
-
-    // Decodifica e valida tamanho (max 2 MB)
-    $decoded = base64_decode($base64, true);
-    if ($decoded === false) respond(400, ['error' => 'Base64 invalido']);
-    if (strlen($decoded) > 2 * 1024 * 1024) respond(422, ['error' => 'Imagem muito grande. Maximo 2 MB.']);
-
-    // Detecta extensao pelo magic bytes
-    $ext = 'jpg';
-    if (substr($decoded, 0, 4) === "\x89PNG") $ext = 'png';
-    elseif (substr($decoded, 0, 4) === 'GIF8') $ext = 'gif';
-
-    // Garante pasta de uploads
-    $uploadDir = __DIR__ . '/uploads/';
-    if (!is_dir($uploadDir)) mkdir($uploadDir, 0755, true);
-
-    $filename = uuid() . '.' . $ext;
-    $filepath = $uploadDir . $filename;
-
-    if (file_put_contents($filepath, $decoded) === false) {
-        respond(500, ['error' => 'Erro ao salvar imagem no servidor']);
-    }
-
-    // Monta URL publica
-    $proto    = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
-    $host     = $_SERVER['HTTP_HOST'] ?? 'wilkenperez.com';
-    $basePath = '/backlog-network-api/uploads/';
-    $url      = $proto . '://' . $host . $basePath . $filename;
-
-    respond(201, ['url' => $url, 'image_url' => $url, 'filename' => $filename]);
-}
-
-// ─── ROUTE: /messages ────────────────────────────────────────────────────────
-if ($route === 'messages') {
-
-    // GET /messages — lista conversas
-    if (!$sub && $method === 'GET') {
+    // GET /lists/me
+    if ($sub === 'me' && $method === 'GET') {
         $me = auth_required();
-        $stmt = db()->prepare('
-            SELECT
-                m.id, m.sender_id, m.receiver_id,
-                m.body AS last_message,
-                m.created_at AS last_message_at,
-                CASE WHEN m.sender_id = ? THEN m.receiver_id ELSE m.sender_id END AS other_id,
-                u.username AS other_username,
-                u.display_name AS other_name,
-                u.avatar_url AS other_avatar,
-                (SELECT COUNT(*) FROM messages m2
-                 WHERE m2.receiver_id = ? AND m2.sender_id = u.id AND m2.is_read = 0) AS unread_count
-            FROM messages m
-            JOIN users u ON u.id = CASE WHEN m.sender_id = ? THEN m.receiver_id ELSE m.sender_id END
-            WHERE (m.sender_id = ? OR m.receiver_id = ?)
-              AND m.id = (
-                SELECT id FROM messages m3
-                WHERE (m3.sender_id = m.sender_id AND m3.receiver_id = m.receiver_id)
-                   OR (m3.sender_id = m.receiver_id AND m3.receiver_id = m.sender_id)
-                ORDER BY m3.created_at DESC LIMIT 1
-              )
-            ORDER BY m.created_at DESC
-            LIMIT 50
-        ');
-        $stmt->execute([$me['id'], $me['id'], $me['id'], $me['id'], $me['id']]);
+        $stmt = db()->prepare('SELECT l.*, COUNT(li.id) as items_count FROM game_lists l LEFT JOIN game_list_items li ON li.list_id = l.id WHERE l.user_id = ? GROUP BY l.id ORDER BY l.created_at DESC');
+        $stmt->execute([$me['id']]);
         respond(200, ['data' => $stmt->fetchAll()]);
     }
 
-    // GET /messages/conversation/:userId — historico com um usuario
-    if ($sub === 'conversation' && $id && $method === 'GET') {
-        $me = auth_required();
-        $pg = paginate();
-        $stmt = db()->prepare('
-            SELECT m.*, u.username AS sender_username, u.avatar_url AS sender_avatar
-            FROM messages m
-            JOIN users u ON u.id = m.sender_id
-            WHERE (m.sender_id = ? AND m.receiver_id = ?)
-               OR (m.sender_id = ? AND m.receiver_id = ?)
-            ORDER BY m.created_at DESC
-            LIMIT ? OFFSET ?
-        ');
-        $stmt->execute([$me['id'], $id, $id, $me['id'], $pg['limit'], $pg['offset']]);
-        $msgs = array_reverse($stmt->fetchAll());
-
-        // Marca como lidas
-        db()->prepare('UPDATE messages SET is_read = 1 WHERE receiver_id = ? AND sender_id = ?')
-           ->execute([$me['id'], $id]);
-
-        respond(200, ['data' => $msgs]);
-    }
-
-    // POST /messages — enviar mensagem
+    // POST /lists
     if (!$sub && $method === 'POST') {
         $me = auth_required();
-        $b  = body();
-
-        // Aceita vários nomes de campo do frontend
-        $toId = $b['to_user_id'] ?? $b['receiver_id'] ?? $b['recipient_id'] ?? null;
-        $body = $b['body'] ?? $b['message'] ?? $b['content'] ?? null;
-
-        if (!$toId) respond(400, ['error' => 'Destinatario obrigatorio (to_user_id)']);
-        if (!$body) respond(400, ['error' => 'Mensagem vazia']);
-        if ($toId === $me['id']) respond(400, ['error' => 'Nao pode enviar mensagem para si mesmo']);
-
-        // Verifica se destinatario existe
-        $dest = db()->prepare('SELECT id FROM users WHERE id = ? AND is_active = 1 LIMIT 1');
-        $dest->execute([$toId]);
-        if (!$dest->fetch()) respond(404, ['error' => 'Destinatario nao encontrado']);
-
-        $mid = uuid();
+        $b = body();
+        if (empty($b['title'])) respond(422, ['error' => 'Título obrigatório']);
+        $lid = uuid();
         try {
-            db()->prepare('
-                INSERT INTO messages (id, sender_id, receiver_id, body, is_read, created_at)
-                VALUES (?, ?, ?, ?, 0, NOW())
-            ')->execute([$mid, $me['id'], $toId, trim($body)]);
+            db()->prepare('INSERT INTO game_lists (id, user_id, title, description, list_type, is_public, created_at, updated_at) VALUES (?,?,?,?,?,?,NOW(),NOW())')
+               ->execute([$lid, $me['id'], trim($b['title']), $b['description'] ?? null, $b['list_type'] ?? 'custom', isset($b['is_public']) ? (int)$b['is_public'] : 1]);
         } catch (PDOException $e) {
-            respond(500, ['error' => 'Erro ao enviar mensagem: ' . $e->getMessage()]);
+            respond(500, ['error' => 'Erro ao criar lista: ' . $e->getMessage()]);
         }
+        respond(201, ['id' => $lid, 'title' => trim($b['title'])]);
+    }
 
-        respond(201, ['id' => $mid, 'body' => trim($body), 'sender_id' => $me['id'], 'receiver_id' => $toId]);
+    // POST /lists/:id/items
+    if ($sub && $id === 'items' && $method === 'POST') {
+        $me = auth_required();
+        $b = body();
+        $iid = uuid();
+        db()->prepare('INSERT INTO game_list_items (id, list_id, game_id, notes, position, created_at) VALUES (?,?,?,?,?,NOW())')
+           ->execute([$iid, $sub, $b['game_id'], $b['notes'] ?? null, $b['position'] ?? 0]);
+        respond(201, ['id' => $iid]);
+    }
+
+    // DELETE /lists/:id/items/:itemId
+    if ($sub && $id === 'items' && $action && $method === 'DELETE') {
+        $me = auth_required();
+        db()->prepare('DELETE FROM game_list_items WHERE id = ?')->execute([$action]);
+        respond(200, ['ok' => true]);
+    }
+
+    // PATCH /lists/:id
+    if ($sub && !$id && $method === 'PATCH') {
+        $me = auth_required();
+        $b = body();
+        $allowed = ['title', 'description', 'is_public', 'list_type'];
+        $sets = []; $params = [];
+        foreach ($allowed as $f) { if (array_key_exists($f, $b)) { $sets[] = "$f = ?"; $params[] = $b[$f]; } }
+        if ($sets) { $params[] = $sub; $params[] = $me['id']; db()->prepare('UPDATE game_lists SET ' . implode(', ', $sets) . ' WHERE id = ? AND user_id = ?')->execute($params); }
+        respond(200, ['ok' => true]);
+    }
+
+    // DELETE /lists/:id
+    if ($sub && !$id && $method === 'DELETE') {
+        $me = auth_required();
+        db()->prepare('DELETE FROM game_lists WHERE id = ? AND user_id = ?')->execute([$sub, $me['id']]);
+        respond(200, ['ok' => true]);
     }
 }
 
-// ─── 404 FALLBACK ─────────────────────────────────────────────────────────────
-respond(404, ['error' => 'Rota não encontrada', 'path' => $uri]);
+// ============================================================
+// COMMENTS — like/unlike
+// ============================================================
+if ($resource === 'comments') {
 
+    // POST /comments/:id/like
+    if ($sub && $id === 'like' && $method === 'POST') {
+        $me = auth_required();
+        validate_id($sub, 'Comment ID');
+        try {
+            db()->prepare('INSERT INTO comment_likes (id, user_id, comment_id, created_at) VALUES (?,?,?,NOW())')
+               ->execute([uuid(), $me['id'], $sub]);
+            db()->prepare('UPDATE comments SET likes_count = likes_count + 1 WHERE id = ?')->execute([$sub]);
+        } catch (PDOException $e) {} // IGNORE duplicate
+        respond(200, ['ok' => true]);
+    }
+
+    // DELETE /comments/:id/like
+    if ($sub && $id === 'like' && $method === 'DELETE') {
+        $me = auth_required();
+        validate_id($sub, 'Comment ID');
+        $del = db()->prepare('DELETE FROM comment_likes WHERE user_id = ? AND comment_id = ?');
+        $del->execute([$me['id'], $sub]);
+        if ($del->rowCount() > 0) {
+            db()->prepare('UPDATE comments SET likes_count = GREATEST(likes_count - 1, 0) WHERE id = ?')->execute([$sub]);
+        }
+        respond(200, ['ok' => true]);
+    }
+}
+
+// ============================================================
+// FANS & SCRAPS (social connections)
+// ============================================================
+if ($resource === 'fans') {
+
+    // GET /fans/me — lista fãs do usuário autenticado
+    if ($sub === 'me' && $method === 'GET') {
+        $me = auth_required();
+        $pg = paginate();
+        $stmt = db()->prepare('
+            SELECT f.id AS fan_id, f.created_at AS fan_since,
+                   u.id, u.username, u.display_name, u.avatar_url, u.level
+            FROM fans f
+            JOIN users u ON u.id = f.fan_id
+            WHERE f.user_id = ?
+            ORDER BY f.created_at DESC
+            LIMIT ? OFFSET ?
+        ');
+        $stmt->execute([$me['id'], $pg['limit'], $pg['offset']]);
+        respond(200, ['data' => $stmt->fetchAll()]);
+    }
+
+    // GET /fans/:userId — lista fãs de qualquer usuário
+    if ($sub && $sub !== 'me' && !$id && $method === 'GET') {
+        auth_required();
+        validate_id($sub, 'User ID');
+        $pg = paginate();
+        $stmt = db()->prepare('
+            SELECT f.id AS fan_id, f.created_at AS fan_since,
+                   u.id, u.username, u.display_name, u.avatar_url, u.level
+            FROM fans f
+            JOIN users u ON u.id = f.fan_id
+            WHERE f.user_id = ?
+            ORDER BY f.created_at DESC
+            LIMIT ? OFFSET ?
+        ');
+        $stmt->execute([$sub, $pg['limit'], $pg['offset']]);
+        respond(200, ['data' => $stmt->fetchAll()]);
+    }
+
+    // POST /fans/:userId — virar fã de alguém
+    if ($sub && !$id && $method === 'POST') {
+        $me = auth_required();
+        validate_id($sub, 'User ID');
+        if ($sub === $me['id']) respond(422, ['error' => 'Você não pode ser fã de si mesmo']);
+        try {
+            db()->prepare('INSERT INTO fans (id, user_id, fan_id, created_at) VALUES (?,?,?,NOW())')
+               ->execute([uuid(), $sub, $me['id']]);
+        } catch (PDOException $e) {}
+        respond(200, ['ok' => true]);
+    }
+
+    // DELETE /fans/:userId — deixar de ser fã
+    if ($sub && !$id && $method === 'DELETE') {
+        $me = auth_required();
+        validate_id($sub, 'User ID');
+        db()->prepare('DELETE FROM fans WHERE user_id = ? AND fan_id = ?')
+           ->execute([$sub, $me['id']]);
+        respond(200, ['ok' => true]);
+    }
+}
+
+if ($resource === 'scraps') {
+
+    // GET /scraps/:userId — scraps do perfil de um usuário
+    if ($sub && !$id && $method === 'GET') {
+        $me = auth_required();
+        validate_id($sub, 'User ID');
+        $pg = paginate();
+        $stmt = db()->prepare('
+            SELECT s.*, u.username AS author_username, u.display_name AS author_name, u.avatar_url AS author_avatar
+            FROM scraps s
+            JOIN users u ON u.id = s.author_id
+            WHERE s.profile_id = ?
+            ORDER BY s.created_at DESC
+            LIMIT ? OFFSET ?
+        ');
+        $stmt->execute([$sub, $pg['limit'], $pg['offset']]);
+        respond(200, ['data' => $stmt->fetchAll()]);
+    }
+
+    // POST /scraps/:userId — escrever scrap no perfil de alguém
+    if ($sub && !$id && $method === 'POST') {
+        $me = auth_required();
+        validate_id($sub, 'User ID');
+        $b = body();
+        if (empty($b['body'])) respond(422, ['error' => 'Corpo do scrap é obrigatório']);
+        if (strlen($b['body']) > 500) respond(422, ['error' => 'Scrap não pode ter mais de 500 caracteres']);
+        $sid = uuid();
+        try {
+            db()->prepare('INSERT INTO scraps (id, profile_id, author_id, body, created_at) VALUES (?,?,?,?,NOW())')
+               ->execute([$sid, $sub, $me['id'], trim($b['body'])]);
+        } catch (PDOException $e) {
+            respond(500, ['error' => 'Erro ao salvar scrap']);
+        }
+        respond(201, ['id' => $sid]);
+    }
+
+    // DELETE /scraps/:scrapId — remover scrap (autor ou dono do perfil)
+    if ($sub && !$id && $method === 'DELETE') {
+        $me = auth_required();
+        validate_id($sub, 'Scrap ID');
+        $scrap = db()->prepare('SELECT author_id, profile_id FROM scraps WHERE id = ?');
+        $scrap->execute([$sub]);
+        $s = $scrap->fetch();
+        if (!$s) respond(404, ['error' => 'Scrap não encontrado']);
+        if ($s['author_id'] !== $me['id'] && $s['profile_id'] !== $me['id']) {
+            respond(403, ['error' => 'Sem permissão para remover este scrap']);
+        }
+        db()->prepare('DELETE FROM scraps WHERE id = ?')->execute([$sub]);
+        respond(200, ['ok' => true]);
+    }
+}
+
+// ============================================================
+// FALLBACK
+// ============================================================
+respond(404, ['error' => 'Rota não encontrada', 'path' => $uri]);

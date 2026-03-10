@@ -1,5 +1,6 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
+import { useQuery } from '@tanstack/react-query';
 import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -12,6 +13,7 @@ import * as Haptics from 'expo-haptics';
 import { Colors, Fonts, Shadows } from '../theme';
 import type { RootStackParamList, MainTabParamList } from '../types';
 import { useAuthStore } from '../store/authStore';
+import { notificationsService, messagesService } from '../services/api';
 
 // ─── SCREENS ─────────────────────────────────────────────────────────────────
 // Auth
@@ -60,12 +62,39 @@ const TABS: TabItem[] = [
 
 function CustomTabBar({ state, descriptors, navigation }: any) {
   const insets = useSafeAreaInsets();
+
+  // ─── Badges de não lidos ───────────────────────────────────────────────────
+  const { data: unreadNotifs } = useQuery({
+    queryKey: ['unread-notifs-count'],
+    queryFn: () => notificationsService.getUnreadCount(),
+    select: (res: any) => Number(res?.count ?? res?.data?.count ?? 0),
+    refetchInterval: 30_000,
+  });
+  const { data: unreadMessages } = useQuery({
+    queryKey: ['unread-messages-count'],
+    queryFn: () => messagesService.getConversations(),
+    select: (res: any) => {
+      const convs = res?.data ?? res ?? [];
+      return Array.isArray(convs)
+        ? convs.reduce((sum: number, c: any) => sum + Number(c.unread_count ?? 0), 0)
+        : 0;
+    },
+    refetchInterval: 30_000,
+  });
+
+  // tabName → badge count
+  const badgeMap: Record<string, number> = {
+    Feed:    (unreadNotifs ?? 0),
+    Profile: (unreadMessages ?? 0),
+  };
+
   return (
     <View style={[styles.tabBar, { paddingBottom: insets.bottom + 8, ...Shadows.navBar }]}>
       {state.routes.map((route: any, index: number) => {
         const isFocused = state.index === index;
         const tab = TABS[index];
         const scale = useSharedValue(1);
+        const badgeCount = badgeMap[route.name] ?? 0;
 
         const animStyle = useAnimatedStyle(() => ({
           transform: [{ scale: scale.value }],
@@ -89,9 +118,18 @@ function CustomTabBar({ state, descriptors, navigation }: any) {
           >
             <Animated.View style={[styles.tabItemInner, animStyle]}>
               {isFocused && <View style={styles.tabActiveIndicator} />}
-              <Text style={[styles.tabIcon, isFocused && styles.tabIconActive]}>
-                {isFocused ? tab.activeIcon : tab.icon}
-              </Text>
+              <View style={{ position: 'relative' }}>
+                <Text style={[styles.tabIcon, isFocused && styles.tabIconActive]}>
+                  {isFocused ? tab.activeIcon : tab.icon}
+                </Text>
+                {badgeCount > 0 && !isFocused && (
+                  <View style={styles.tabBadge}>
+                    <Text style={styles.tabBadgeText}>
+                      {badgeCount > 99 ? '99+' : badgeCount}
+                    </Text>
+                  </View>
+                )}
+              </View>
               <Text style={[styles.tabLabel, isFocused && styles.tabLabelActive]}>
                 {tab.label}
               </Text>
@@ -238,4 +276,19 @@ const styles = StyleSheet.create({
   tabLabelActive: {
     color: Colors.accent,
   },
+  tabBadge: {
+    position: 'absolute',
+    top: -4,
+    right: -8,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: Colors.red,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 3,
+    borderWidth: 1.5,
+    borderColor: Colors.surface,
+  },
+  tabBadgeText: { fontFamily: Fonts.mono, fontSize: 9, color: '#fff', lineHeight: 13 },
 });

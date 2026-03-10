@@ -1,16 +1,17 @@
 import React, { useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  TextInput, KeyboardAvoidingView, Platform, Alert,
+  TextInput, KeyboardAvoidingView, Platform, Alert, Image,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
+import * as ImagePicker from 'expo-image-picker';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Colors, Fonts, Spacing, Radius } from '../../theme';
 import { Avatar } from '../../components';
-import { usersService } from '../../services/api';
+import { usersService, uploadService } from '../../services/api';
 import { useAuthStore } from '../../store/authStore';
 
 export default function EditProfileScreen() {
@@ -22,22 +23,75 @@ export default function EditProfileScreen() {
   const [displayName, setDisplayName] = useState(user?.display_name ?? user?.displayName ?? '');
   const [bio, setBio] = useState(user?.bio ?? '');
   const [website, setWebsite] = useState(user?.website ?? '');
+  const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [newAvatarUrl, setNewAvatarUrl] = useState<string | null>(null);
 
   const saveMutation = useMutation({
     mutationFn: (data: any) => usersService.updateProfile(data),
     onSuccess: (res: any) => {
       queryClient.invalidateQueries({ queryKey: ['profile'] });
-      if (setUser) setUser({ ...user, display_name: displayName, bio, website } as any);
+      if (setUser) setUser({
+        ...user,
+        display_name: displayName,
+        displayName,
+        bio,
+        website,
+        ...(newAvatarUrl ? { avatar_url: newAvatarUrl, avatarUrl: newAvatarUrl, avatar: newAvatarUrl } : {}),
+      } as any);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       navigation.goBack();
     },
     onError: () => Alert.alert('Erro', 'Não foi possível salvar. Tente novamente.'),
   });
 
+  const handlePickAvatar = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permissão necessária', 'Precisamos de acesso à sua galeria para trocar a foto.');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.7,
+      base64: true,
+    });
+
+    if (result.canceled || !result.assets?.[0]) return;
+
+    const asset = result.assets[0];
+    setAvatarPreview(asset.uri);
+    setUploadingAvatar(true);
+
+    try {
+      const base64 = asset.base64;
+      if (!base64) throw new Error('Base64 não disponível');
+      const uploadRes = await uploadService.uploadImage(base64);
+      const url = uploadRes?.url ?? uploadRes?.image_url;
+      if (!url) throw new Error('URL não retornada');
+      setNewAvatarUrl(url);
+    } catch (e: any) {
+      setAvatarPreview(null);
+      Alert.alert('Erro no upload', e?.message ?? 'Não foi possível enviar a foto.');
+    } finally {
+      setUploadingAvatar(false);
+    }
+  };
+
   const handleSave = () => {
     if (!displayName.trim()) { Alert.alert('Nome obrigatório', 'Digite um nome de exibição.'); return; }
-    saveMutation.mutate({ display_name: displayName.trim(), bio: bio.trim(), website: website.trim() });
+    saveMutation.mutate({
+      display_name: displayName.trim(),
+      bio: bio.trim(),
+      website: website.trim(),
+      ...(newAvatarUrl ? { avatar_url: newAvatarUrl } : {}),
+    });
   };
+
+  const currentAvatar = avatarPreview ?? (user as any)?.avatar_url ?? (user as any)?.avatarUrl;
 
   return (
     <KeyboardAvoidingView style={{ flex: 1, backgroundColor: Colors.bg }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -48,8 +102,8 @@ export default function EditProfileScreen() {
         <Text style={styles.headerTitle}>EDITAR PERFIL</Text>
         <TouchableOpacity
           onPress={handleSave}
-          disabled={saveMutation.isPending}
-          style={[styles.saveBtn, saveMutation.isPending && { opacity: 0.5 }]}
+          disabled={saveMutation.isPending || uploadingAvatar}
+          style={[styles.saveBtn, (saveMutation.isPending || uploadingAvatar) && { opacity: 0.5 }]}
         >
           <LinearGradient colors={[Colors.accent, Colors.accentDark]} style={styles.saveGradient}>
             <Text style={styles.saveText}>{saveMutation.isPending ? '...' : 'Salvar'}</Text>
@@ -60,10 +114,23 @@ export default function EditProfileScreen() {
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
         {/* Avatar */}
         <View style={styles.avatarSection}>
-          <Avatar user={user as any} size={80} />
-          <TouchableOpacity style={styles.changeAvatarBtn} onPress={() => Alert.alert('Em breve', 'Upload de foto em breve.')}>
-            <Text style={styles.changeAvatarText}>Trocar foto</Text>
+          {currentAvatar ? (
+            <Image source={{ uri: currentAvatar }} style={styles.avatarImage} />
+          ) : (
+            <Avatar user={user as any} size={80} />
+          )}
+          <TouchableOpacity
+            style={[styles.changeAvatarBtn, uploadingAvatar && { opacity: 0.5 }]}
+            onPress={handlePickAvatar}
+            disabled={uploadingAvatar}
+          >
+            <Text style={styles.changeAvatarText}>
+              {uploadingAvatar ? 'Enviando...' : 'Trocar foto'}
+            </Text>
           </TouchableOpacity>
+          {newAvatarUrl && (
+            <Text style={{ fontFamily: Fonts.mono, fontSize: 10, color: Colors.teal }}>✓ Nova foto pronta</Text>
+          )}
         </View>
 
         <View style={styles.field}>
@@ -130,6 +197,7 @@ const styles = StyleSheet.create({
   saveText: { fontFamily: Fonts.monoBold, fontSize: 13, color: '#0a0a0f' },
   content: { paddingHorizontal: Spacing.lg, paddingTop: Spacing.xl, gap: Spacing.xl, paddingBottom: 100 },
   avatarSection: { alignItems: 'center', gap: 12, marginBottom: Spacing.md },
+  avatarImage: { width: 80, height: 80, borderRadius: 40, borderWidth: 2, borderColor: Colors.border },
   changeAvatarBtn: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: Radius.full, borderWidth: 1, borderColor: Colors.accent },
   changeAvatarText: { fontFamily: Fonts.monoBold, fontSize: 12, color: Colors.accent },
   field: { gap: 8 },

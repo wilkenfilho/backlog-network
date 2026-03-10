@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   TextInput, Alert, ActivityIndicator, KeyboardAvoidingView, Platform,
+  Modal, Pressable,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -16,6 +17,66 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Colors, Fonts, Spacing, Radius, Shadows } from '../../theme';
 import { Avatar } from '../../components';
 import { communitiesService, uploadService } from '../../services/api';
+
+// ─── PROMPT MODAL (substitui Alert.prompt — funciona em iOS e Android) ────────
+function PromptModal({
+  visible, title, subtitle, placeholder, onConfirm, onCancel, confirmLabel = 'Confirmar', confirmColor,
+}: {
+  visible: boolean;
+  title: string;
+  subtitle?: string;
+  placeholder?: string;
+  onConfirm: (value: string) => void;
+  onCancel: () => void;
+  confirmLabel?: string;
+  confirmColor?: string;
+}) {
+  const [value, setValue] = useState('');
+  const handleConfirm = () => { onConfirm(value.trim()); setValue(''); };
+  const handleCancel = () => { onCancel(); setValue(''); };
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={handleCancel}>
+      <Pressable style={promptStyles.overlay} onPress={handleCancel}>
+        <Pressable style={promptStyles.sheet} onPress={() => {}}>
+          <Text style={promptStyles.title}>{title}</Text>
+          {subtitle ? <Text style={promptStyles.subtitle}>{subtitle}</Text> : null}
+          <TextInput
+            style={promptStyles.input}
+            value={value}
+            onChangeText={setValue}
+            placeholder={placeholder ?? ''}
+            placeholderTextColor={Colors.muted}
+            autoFocus
+            returnKeyType="done"
+            onSubmitEditing={handleConfirm}
+          />
+          <View style={promptStyles.actions}>
+            <TouchableOpacity style={promptStyles.cancelBtn} onPress={handleCancel}>
+              <Text style={promptStyles.cancelText}>Cancelar</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[promptStyles.confirmBtn, { backgroundColor: confirmColor ?? Colors.accent }]} onPress={handleConfirm}>
+              <Text style={promptStyles.confirmText}>{confirmLabel}</Text>
+            </TouchableOpacity>
+          </View>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
+const promptStyles = StyleSheet.create({
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'center', alignItems: 'center', padding: 24 },
+  sheet: { width: '100%', backgroundColor: Colors.surface, borderRadius: Radius.xl, padding: Spacing.xl, borderWidth: 1, borderColor: Colors.border },
+  title: { fontFamily: Fonts.display, fontSize: 18, color: Colors.text, marginBottom: Spacing.xs },
+  subtitle: { fontFamily: Fonts.body, fontSize: 13, color: Colors.muted, marginBottom: Spacing.md },
+  input: { backgroundColor: Colors.surface2, borderRadius: Radius.lg, paddingHorizontal: 14, paddingVertical: 10, color: Colors.text, fontFamily: Fonts.body, fontSize: 14, borderWidth: 1, borderColor: Colors.border, marginBottom: Spacing.lg },
+  actions: { flexDirection: 'row', gap: 10 },
+  cancelBtn: { flex: 1, paddingVertical: 12, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.border, alignItems: 'center' },
+  cancelText: { fontFamily: Fonts.bodyBold, fontSize: 14, color: Colors.muted },
+  confirmBtn: { flex: 1, paddingVertical: 12, borderRadius: Radius.lg, alignItems: 'center' },
+  confirmText: { fontFamily: Fonts.monoBold, fontSize: 14, color: '#0a0a0f' },
+});
 
 // ─── SECTION HEADER ──────────────────────────────────────────────────────────
 function SectionHeader({ title, subtitle }: { title: string; subtitle?: string }) {
@@ -80,6 +141,18 @@ export default function CommunitySettingsScreen() {
   const [descriptionEdit, setDescriptionEdit] = useState(community?.description ?? '');
   const [rulesEdit, setRulesEdit] = useState(community?.rules ?? '');
 
+  // ── Prompt Modal state ────────────────────────────────────────────────────
+  type PromptAction = 'addMod' | 'removeMember' | 'transferOwnership' | 'reportContent' | null;
+  const [promptAction, setPromptAction] = useState<PromptAction>(null);
+  const [pendingReportReason, setPendingReportReason] = useState<string | null>(null);
+
+  const promptConfig: Record<Exclude<PromptAction, null>, { title: string; subtitle?: string; placeholder: string; confirmLabel?: string; confirmColor?: string }> = {
+    addMod:            { title: 'Adicionar moderador',        subtitle: 'Digite o nome de usuário da pessoa:', placeholder: '@usuario', confirmLabel: 'Adicionar', confirmColor: Colors.purple },
+    removeMember:      { title: 'Remover membro',             subtitle: 'Digite o nome de usuário do membro:', placeholder: '@usuario', confirmLabel: 'Remover',   confirmColor: Colors.red },
+    transferOwnership: { title: 'Transferir administração',   subtitle: 'Esta ação é irreversível. Digite o nome de usuário do novo dono:', placeholder: '@usuario', confirmLabel: 'Transferir', confirmColor: Colors.amber },
+    reportContent:     { title: 'ID do conteúdo',             subtitle: 'Cole o ID do comentário ou tópico a denunciar:', placeholder: 'ID do conteúdo', confirmLabel: 'Denunciar', confirmColor: Colors.amber },
+  };
+
   // ── Cover photo ───────────────────────────────────────────────────────────
   const [newCoverUri, setNewCoverUri] = useState<string | null>(null);
   const [coverUploading, setCoverUploading] = useState(false);
@@ -140,24 +213,7 @@ export default function CommunitySettingsScreen() {
   };
 
   // ── Add moderator ─────────────────────────────────────────────────────────
-  const handleAddModerator = () => {
-    Alert.prompt(
-      'Adicionar moderador',
-      'Digite o nome de usuário da pessoa:',
-      async (username) => {
-        if (!username?.trim()) return;
-        try {
-          await communitiesService.addModerator(communityId, username.trim());
-          queryClient.invalidateQueries({ queryKey: ['community', communityId] });
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          Alert.alert('Moderador adicionado!', `@${username} agora é moderador.`);
-        } catch (e: any) {
-          Alert.alert('Erro', e?.message ?? 'Usuário não encontrado ou já é moderador.');
-        }
-      },
-      'plain-text',
-    );
-  };
+  const handleAddModerator = () => setPromptAction('addMod');
 
   // ── Remove moderator ──────────────────────────────────────────────────────
   const handleRemoveModerator = (staffMember: any) => {
@@ -180,97 +236,69 @@ export default function CommunitySettingsScreen() {
   };
 
   // ── Remove member ─────────────────────────────────────────────────────────
-  const handleRemoveMember = () => {
-    Alert.prompt(
-      'Remover membro',
-      'Digite o nome de usuário do membro:',
-      (username) => {
-        if (!username?.trim()) return;
-        Alert.alert(
-          'Confirmar remoção',
-          `Remover @${username.trim()} da comunidade?`,
-          [
-            { text: 'Remover', style: 'destructive', onPress: async () => {
-              try {
-                await communitiesService.removeMember(communityId, username.trim());
-                queryClient.invalidateQueries({ queryKey: ['community-members', communityId] });
-                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-                Alert.alert('Membro removido.');
-              } catch (e: any) {
-                Alert.alert('Erro', e?.message ?? 'Não foi possível remover o membro.');
-              }
-            }},
-            { text: 'Cancelar', style: 'cancel' },
-          ]
-        );
-      },
-      'plain-text',
-    );
-  };
+  const handleRemoveMember = () => setPromptAction('removeMember');
 
   // ── Transfer ownership ────────────────────────────────────────────────────
-  const handleTransferOwnership = () => {
-    Alert.prompt(
-      'Transferir administração',
-      'Digite o nome de usuário do novo dono da comunidade. Esta ação é irreversível.',
-      (username) => {
-        if (!username?.trim()) return;
-        Alert.alert(
-          '⚠️ Atenção',
-          `Você perderá a administração da comunidade e ${username.trim()} se tornará o novo dono. Tem certeza?`,
-          [
-            { text: 'Transferir', style: 'destructive', onPress: async () => {
-              try {
-                await communitiesService.transferOwnership(communityId, username.trim());
-                queryClient.invalidateQueries({ queryKey: ['community', communityId] });
-                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-                Alert.alert('Transferência concluída.', '', [{ text: 'OK', onPress: () => navigation.goBack() }]);
-              } catch (e: any) {
-                Alert.alert('Erro', e?.message ?? 'Usuário não encontrado.');
-              }
-            }},
-            { text: 'Cancelar', style: 'cancel' },
-          ]
-        );
-      },
-      'plain-text',
-    );
-  };
+  const handleTransferOwnership = () => setPromptAction('transferOwnership');
 
-  // ── Report comment ────────────────────────────────────────────────────────
+  // ── Report content ────────────────────────────────────────────────────────
   const handleReportContent = () => {
     Alert.alert(
       'Denunciar conteúdo',
       'Selecione o motivo da denúncia:',
       [
-        { text: 'Spam ou publicidade', onPress: () => promptReportId('spam') },
-        { text: 'Conteúdo inapropriado', onPress: () => promptReportId('inappropriate') },
-        { text: 'Assédio ou abuso', onPress: () => promptReportId('harassment') },
-        { text: 'Desinformação', onPress: () => promptReportId('misinformation') },
+        { text: 'Spam ou publicidade',   onPress: () => { setPendingReportReason('spam');          setPromptAction('reportContent'); } },
+        { text: 'Conteúdo inapropriado', onPress: () => { setPendingReportReason('inappropriate'); setPromptAction('reportContent'); } },
+        { text: 'Assédio ou abuso',      onPress: () => { setPendingReportReason('harassment');    setPromptAction('reportContent'); } },
+        { text: 'Desinformação',         onPress: () => { setPendingReportReason('misinformation'); setPromptAction('reportContent'); } },
         { text: 'Cancelar', style: 'cancel' },
       ]
     );
   };
 
-  const promptReportId = (reason: string) => {
-    Alert.prompt(
-      'ID do conteúdo',
-      'Cole o ID do comentário ou tópico que deseja denunciar:',
-      async (contentId) => {
-        if (!contentId?.trim()) return;
-        try {
-          await communitiesService.reportContent(communityId, 'post', contentId.trim(), reason);
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          Alert.alert('Denúncia enviada.', 'Vamos analisar em breve.');
-        } catch (e: any) {
-          Alert.alert('Erro', e?.message ?? 'Não foi possível enviar a denúncia.');
-        }
-      },
-      'plain-text',
-    );
+  // ── PromptModal confirm handler ───────────────────────────────────────────
+  const handlePromptConfirm = async (value: string) => {
+    const action = promptAction;
+    setPromptAction(null);
+    if (!value) return;
+    try {
+      if (action === 'addMod') {
+        await communitiesService.addModerator(communityId, value);
+        queryClient.invalidateQueries({ queryKey: ['community', communityId] });
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        Alert.alert('Moderador adicionado!', `@${value} agora é moderador.`);
+      } else if (action === 'removeMember') {
+        Alert.alert('Confirmar remoção', `Remover @${value} da comunidade?`, [
+          { text: 'Remover', style: 'destructive', onPress: async () => {
+            await communitiesService.removeMember(communityId, value);
+            queryClient.invalidateQueries({ queryKey: ['community-members', communityId] });
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            Alert.alert('Membro removido.');
+          }},
+          { text: 'Cancelar', style: 'cancel' },
+        ]);
+      } else if (action === 'transferOwnership') {
+        Alert.alert('⚠️ Atenção', `Você perderá a administração e @${value} se tornará o novo dono. Tem certeza?`, [
+          { text: 'Transferir', style: 'destructive', onPress: async () => {
+            await communitiesService.transferOwnership(communityId, value);
+            queryClient.invalidateQueries({ queryKey: ['community', communityId] });
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            Alert.alert('Transferência concluída.', '', [{ text: 'OK', onPress: () => navigation.goBack() }]);
+          }},
+          { text: 'Cancelar', style: 'cancel' },
+        ]);
+      } else if (action === 'reportContent' && pendingReportReason) {
+        await communitiesService.reportContent(communityId, 'post', value, pendingReportReason);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        Alert.alert('Denúncia enviada.', 'Vamos analisar em breve.');
+        setPendingReportReason(null);
+      }
+    } catch (e: any) {
+      Alert.alert('Erro', e?.message ?? 'Não foi possível concluir a ação.');
+    }
   };
 
-  // ── Delete community ──────────────────────────────────────────────────────
+    // ── Delete community ──────────────────────────────────────────────────────
   const handleDeleteCommunity = () => {
     Alert.alert(
       '🗑️ Deletar comunidade',
@@ -501,6 +529,20 @@ export default function CommunitySettingsScreen() {
         )}
 
       </ScrollView>
+
+      {/* PromptModal — cross-platform, substitui Alert.prompt */}
+      {promptAction && promptAction in promptConfig && (
+        <PromptModal
+          visible
+          title={promptConfig[promptAction].title}
+          subtitle={promptConfig[promptAction].subtitle}
+          placeholder={promptConfig[promptAction].placeholder}
+          confirmLabel={promptConfig[promptAction].confirmLabel}
+          confirmColor={promptConfig[promptAction].confirmColor}
+          onConfirm={handlePromptConfirm}
+          onCancel={() => { setPromptAction(null); setPendingReportReason(null); }}
+        />
+      )}
     </KeyboardAvoidingView>
   );
 }

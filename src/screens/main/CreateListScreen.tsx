@@ -31,11 +31,13 @@ export default function CreateListScreen() {
   const createMutation = useMutation({
     mutationFn: (data: any) => listsService.create(data),
     onSuccess: (newList: any) => {
-      // Invalidate all user-lists queries so profile tab refreshes immediately
       queryClient.invalidateQueries({ queryKey: ['user-lists'] });
       queryClient.invalidateQueries({ queryKey: ['lists'] });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      navigation.goBack();
+      // Navega para a lista recém-criada para o usuário já poder adicionar jogos
+      const listId = newList?.id ?? newList?.data?.id;
+      const listTitle = title.trim();
+      navigation.replace('ListDetail', { listId, title: listTitle });
     },
     onError: (e: any) => Alert.alert('Erro ao criar lista', e?.message ?? 'Não foi possível criar a lista.'),
   });

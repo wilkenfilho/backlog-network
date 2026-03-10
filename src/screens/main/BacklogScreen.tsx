@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import {
   View, Text, FlatList, StyleSheet, TouchableOpacity,
-  RefreshControl, Alert, ActivityIndicator,
+  RefreshControl, Alert, ActivityIndicator, Modal, TextInput, Pressable, ScrollView,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -11,7 +11,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 import { Colors, Fonts, Spacing, Radius, Shadows } from '../../theme';
 import { GameCover, ProgressBar, EmptyState } from '../../components';
-import { backlogService } from '../../services/api';
+import { backlogService, gamesService } from '../../services/api';
 import type { GameStatus } from '../../types';
 
 const STATUS_FILTERS: { key: GameStatus | 'all'; label: string; emoji: string }[] = [
@@ -125,6 +125,61 @@ export default function BacklogScreen() {
   const [activeFilter, setActiveFilter] = useState<GameStatus | 'all'>('all');
   const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
 
+  // ─── Modal de adição rápida ────────────────────────────────────────────────
+  const [addModalVisible, setAddModalVisible] = useState(false);
+  const [searchText, setSearchText] = useState('');
+  const [selectedGame, setSelectedGame] = useState<any>(null);
+  const [addStatus, setAddStatus] = useState<GameStatus>('backlog');
+  const [addPlatform, setAddPlatform] = useState('');
+  const [addHours, setAddHours] = useState('');
+
+  const { data: searchResults, isLoading: searchLoading } = useQuery({
+    queryKey: ['game-search-backlog', searchText],
+    queryFn: () => gamesService.search(searchText),
+    select: (res: any) => {
+      const raw = res?.data?.data ?? res?.data ?? res ?? [];
+      return Array.isArray(raw) ? raw : [];
+    },
+    enabled: searchText.length >= 2,
+  });
+
+  const addMutation = useMutation({
+    mutationFn: (data: any) => backlogService.addGame(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['my-backlog'] });
+      queryClient.invalidateQueries({ queryKey: ['backlog-stats'] });
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setAddModalVisible(false);
+      setSelectedGame(null);
+      setSearchText('');
+      setAddPlatform('');
+      setAddHours('');
+      setAddStatus('backlog');
+    },
+    onError: (e: any) => {
+      const msg = e?.response?.data?.error ?? e?.message ?? 'Não foi possível adicionar.';
+      Alert.alert('Erro', msg);
+    },
+  });
+
+  const handleConfirmAdd = () => {
+    if (!selectedGame) return;
+    addMutation.mutate({
+      game_id: selectedGame.id,
+      status: addStatus,
+      platform: addPlatform.trim() || undefined,
+      hours_played: addHours ? Number(addHours) : undefined,
+    });
+  };
+
+  const ADD_STATUSES: { status: GameStatus; label: string; emoji: string }[] = [
+    { status: 'playing',  label: 'Jogando',  emoji: '▶' },
+    { status: 'backlog',  label: 'Backlog',  emoji: '⊟' },
+    { status: 'finished', label: 'Zerado',   emoji: '✓' },
+    { status: 'wishlist', label: 'Quero',    emoji: '♡' },
+    { status: 'dropped',  label: 'Largado',  emoji: '✕' },
+  ];
+
   // ─── QUERIES ──────────────────────────────────────────────────────────────
   const { data: backlogData, isLoading, refetch, isRefetching } = useQuery({
     queryKey: ['my-backlog', activeFilter === 'all' ? undefined : activeFilter],
@@ -230,7 +285,7 @@ export default function BacklogScreen() {
           >
             <Text style={{ color: viewMode === 'grid' ? Colors.accent : Colors.muted }}>⊞</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.addBtn} onPress={() => navigation.navigate('Search')}>
+          <TouchableOpacity style={styles.addBtn} onPress={() => setAddModalVisible(true)}>
             <LinearGradient colors={[Colors.accent, Colors.accentDark]} style={styles.addBtnGradient}>
               <Text style={styles.addBtnText}>+ Add</Text>
             </LinearGradient>
@@ -300,6 +355,108 @@ export default function BacklogScreen() {
           )}
         />
       )}
+
+      {/* ─── Modal de adição rápida ─────────────────────────────────── */}
+      <Modal visible={addModalVisible} transparent animationType="slide" onRequestClose={() => setAddModalVisible(false)}>
+        <Pressable style={styles.modalOverlay} onPress={() => !addMutation.isPending && setAddModalVisible(false)}>
+          <Pressable style={styles.modalSheet} onStartShouldSetResponder={() => true}>
+            <View style={styles.modalHandle} />
+            <Text style={styles.modalTitle}>
+              {selectedGame ? selectedGame.title : 'Adicionar ao Backlog'}
+            </Text>
+
+            {!selectedGame ? (
+              <>
+                {/* Busca de jogo */}
+                <View style={styles.searchRow}>
+                  <TextInput
+                    style={styles.searchInput}
+                    value={searchText}
+                    onChangeText={setSearchText}
+                    placeholder="Buscar jogo..."
+                    placeholderTextColor={Colors.muted}
+                    autoFocus
+                  />
+                  {searchLoading && <ActivityIndicator color={Colors.accent} size="small" />}
+                </View>
+                <ScrollView style={{ maxHeight: 280 }}>
+                  {(searchResults ?? []).map((g: any) => (
+                    <TouchableOpacity
+                      key={g.id}
+                      style={styles.gameRow}
+                      onPress={() => { Haptics.selectionAsync(); setSelectedGame(g); }}
+                    >
+                      <Text style={styles.gameRowTitle} numberOfLines={1}>{g.title}</Text>
+                      {g.rawg_rating && <Text style={styles.gameRowRating}>★ {Number(g.rawg_rating).toFixed(1)}</Text>}
+                    </TouchableOpacity>
+                  ))}
+                  {searchText.length >= 2 && !searchLoading && (searchResults ?? []).length === 0 && (
+                    <Text style={styles.emptySearch}>Nenhum jogo encontrado</Text>
+                  )}
+                </ScrollView>
+              </>
+            ) : (
+              <>
+                {/* Status */}
+                <Text style={styles.fieldLabel}>STATUS</Text>
+                <View style={styles.statusRow}>
+                  {ADD_STATUSES.map(s => (
+                    <TouchableOpacity
+                      key={s.status}
+                      style={[styles.statusChip, addStatus === s.status && styles.statusChipActive]}
+                      onPress={() => setAddStatus(s.status)}
+                    >
+                      <Text style={styles.statusChipEmoji}>{s.emoji}</Text>
+                      <Text style={[styles.statusChipLabel, addStatus === s.status && styles.statusChipLabelActive]}>
+                        {s.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                {/* Plataforma */}
+                <Text style={styles.fieldLabel}>PLATAFORMA</Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={addPlatform}
+                  onChangeText={setAddPlatform}
+                  placeholder="Ex: PS5, PC, Switch..."
+                  placeholderTextColor={Colors.muted}
+                />
+
+                {/* Horas jogadas */}
+                <Text style={styles.fieldLabel}>HORAS JOGADAS</Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={addHours}
+                  onChangeText={v => setAddHours(v.replace(/[^0-9]/g, ''))}
+                  placeholder="0"
+                  placeholderTextColor={Colors.muted}
+                  keyboardType="numeric"
+                />
+
+                {/* Ações */}
+                <View style={styles.modalActions}>
+                  <TouchableOpacity style={styles.backBtn} onPress={() => setSelectedGame(null)}>
+                    <Text style={styles.backBtnText}>← Trocar jogo</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.confirmBtn, addMutation.isPending && { opacity: 0.5 }]}
+                    onPress={handleConfirmAdd}
+                    disabled={addMutation.isPending}
+                  >
+                    <LinearGradient colors={[Colors.accent, Colors.accentDark]} style={styles.confirmGradient}>
+                      <Text style={styles.confirmText}>
+                        {addMutation.isPending ? 'Salvando...' : '✓ Adicionar'}
+                      </Text>
+                    </LinearGradient>
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -342,4 +499,29 @@ const styles = StyleSheet.create({
   gridCard: { flex: 1, margin: 4, backgroundColor: Colors.card, borderRadius: Radius.lg, overflow: 'hidden', borderWidth: 1, borderColor: Colors.border },
   gridStatusDot: { position: 'absolute', top: 8, right: 8, width: 10, height: 10, borderRadius: 5, borderWidth: 2, borderColor: Colors.bg },
   gridTitle: { fontFamily: Fonts.bodyBold, fontSize: 12, color: Colors.text, padding: 8, lineHeight: 16 },
+  // Modal de adição rápida
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end' },
+  modalSheet: { backgroundColor: Colors.surface, borderTopLeftRadius: Radius.xxl, borderTopRightRadius: Radius.xxl, paddingHorizontal: Spacing.lg, paddingBottom: 40, paddingTop: Spacing.md, maxHeight: '85%' },
+  modalHandle: { width: 36, height: 4, borderRadius: 2, backgroundColor: Colors.border, alignSelf: 'center', marginBottom: 16 },
+  modalTitle: { fontFamily: Fonts.display, fontSize: 18, letterSpacing: 2, color: Colors.text, marginBottom: Spacing.md },
+  searchRow: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: Colors.bg, borderRadius: Radius.lg, paddingHorizontal: 14, paddingVertical: 10, borderWidth: 1, borderColor: Colors.border, marginBottom: Spacing.md },
+  searchInput: { flex: 1, fontFamily: Fonts.body, fontSize: 14, color: Colors.text },
+  gameRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: Colors.border },
+  gameRowTitle: { fontFamily: Fonts.bodyMedium, fontSize: 14, color: Colors.text, flex: 1 },
+  gameRowRating: { fontFamily: Fonts.mono, fontSize: 11, color: Colors.amber },
+  emptySearch: { fontFamily: Fonts.mono, fontSize: 12, color: Colors.muted, textAlign: 'center', paddingVertical: Spacing.lg },
+  fieldLabel: { fontFamily: Fonts.monoBold, fontSize: 10, letterSpacing: 2, color: Colors.muted, marginBottom: 6, marginTop: Spacing.md },
+  fieldInput: { backgroundColor: Colors.bg, borderRadius: Radius.lg, paddingHorizontal: 14, paddingVertical: 10, color: Colors.text, fontFamily: Fonts.body, fontSize: 14, borderWidth: 1, borderColor: Colors.border },
+  statusRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
+  statusChip: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 12, paddingVertical: 7, borderRadius: Radius.full, borderWidth: 1, borderColor: Colors.border, backgroundColor: Colors.bg },
+  statusChipActive: { borderColor: Colors.accent, backgroundColor: Colors.accent + '15' },
+  statusChipEmoji: { fontSize: 12 },
+  statusChipLabel: { fontFamily: Fonts.mono, fontSize: 11, color: Colors.muted },
+  statusChipLabelActive: { color: Colors.accent },
+  modalActions: { flexDirection: 'row', gap: 10, marginTop: Spacing.xl },
+  backBtn: { flex: 1, paddingVertical: 12, alignItems: 'center', backgroundColor: Colors.bg, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.border },
+  backBtnText: { fontFamily: Fonts.monoBold, fontSize: 13, color: Colors.muted },
+  confirmBtn: { flex: 2, borderRadius: Radius.lg, overflow: 'hidden' },
+  confirmGradient: { paddingVertical: 13, alignItems: 'center' },
+  confirmText: { fontFamily: Fonts.monoBold, fontSize: 14, color: '#0a0a0f' },
 });

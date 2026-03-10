@@ -13,8 +13,8 @@ import * as Haptics from 'expo-haptics';
 import { Colors, Fonts, Spacing, Radius, Shadows } from '../../theme';
 import { Button, StarRating, GameCover, Avatar, EmptyState, StatusBadge } from '../../components';
 import type { Game, GameStatus } from '../../types';
-import { rawgService, gamesService, reviewsService } from '../../services/api';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { rawgService, gamesService, reviewsService, backlogService } from '../../services/api';
+import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import { timeAgo } from '../../utils/helpers';
 
 const DESC_CHAR_LIMIT = 180;
@@ -125,8 +125,9 @@ function ReviewCard({ review, onUserPress }: { review: any; onUserPress: (userId
 }
 
 // ─── STATUS PICKER ──────────────────────────────────────────────────────────
-function StatusPicker({ selected, onSelect, onClose }: {
-  selected?: GameStatus; onSelect: (s: GameStatus) => void; onClose: () => void;
+function StatusPicker({ selected, onSelect, onSave, onClose, isSaving }: {
+  selected?: GameStatus; onSelect: (s: GameStatus) => void;
+  onSave: () => void; onClose: () => void; isSaving?: boolean;
 }) {
   return (
     <View style={styles.pickerOverlay}>
@@ -147,7 +148,7 @@ function StatusPicker({ selected, onSelect, onClose }: {
             {selected === opt.status && <Text style={{ color: opt.color }}>✓</Text>}
           </TouchableOpacity>
         ))}
-        <Button label="Salvar" onPress={onClose} style={{ marginTop: Spacing.lg }} />
+        <Button label={isSaving ? 'Salvando...' : 'Salvar'} onPress={onSave} style={{ marginTop: Spacing.lg }} disabled={isSaving} />
       </View>
     </View>
   );
@@ -160,8 +161,33 @@ export default function GameDetailScreen() {
   const scrollY = useRef(new Animated.Value(0)).current;
   const [showPicker, setShowPicker] = useState(false);
   const [myStatus, setMyStatus] = useState<GameStatus | undefined>(undefined);
+  const [backlogEntryId, setBacklogEntryId] = useState<string | undefined>(undefined);
   const [activeTab, setActiveTab] = useState<'overview' | 'reviews' | 'lists'>('overview');
   const [showFullDesc, setShowFullDesc] = useState(false);
+
+  // ── Persist status to backend ────────────────────────────────────────────
+  const addToBacklogMutation = useMutation({
+    mutationFn: (status: GameStatus) => {
+      const gameIdForBacklog = game.backendId ?? game.id ?? gameId;
+      if (backlogEntryId) {
+        return backlogService.updateEntry(backlogEntryId, { status });
+      }
+      return backlogService.addGame({ game_id: String(gameIdForBacklog), status });
+    },
+    onSuccess: (res: any) => {
+      const entryId = res?.id ?? res?.entry_id ?? res?.data?.id;
+      if (entryId) setBacklogEntryId(entryId);
+      setShowPicker(false);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      Alert.alert('✓ Salvo!', `Jogo adicionado ao status "${STATUS_OPTIONS.find(o => o.status === myStatus)?.label}".`);
+    },
+    onError: () => Alert.alert('Erro', 'Não foi possível salvar o status. Tente novamente.'),
+  });
+
+  const handleSaveStatus = () => {
+    if (!myStatus) return;
+    addToBacklogMutation.mutate(myStatus);
+  };
 
   const route = useRoute<any>();
   const routeGame = route.params?.game;
@@ -407,7 +433,7 @@ export default function GameDetailScreen() {
 
       {/* MODALS */}
       <DescriptionModal visible={showFullDesc} onClose={() => setShowFullDesc(false)} title={game.title} description={fullDesc} />
-      {showPicker && <StatusPicker selected={myStatus} onSelect={setMyStatus} onClose={() => setShowPicker(false)} />}
+      {showPicker && <StatusPicker selected={myStatus} onSelect={setMyStatus} onSave={handleSaveStatus} onClose={() => setShowPicker(false)} isSaving={addToBacklogMutation.isPending} />}
     </View>
   );
 }

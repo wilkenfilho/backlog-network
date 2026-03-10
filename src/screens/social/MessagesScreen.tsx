@@ -12,7 +12,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Colors, Fonts, Spacing, Radius } from '../../theme';
 import { Avatar, EmptyState } from '../../components';
 import { useAuthStore } from '../../store/authStore';
-import { messagesService, usersService } from '../../services/api';
+import { messagesService, usersService, scrapsService, fansService } from '../../services/api';
 import { timeAgo } from '../../utils/helpers';
 
 // ─── TYPES ───────────────────────────────────────────────────────────────────
@@ -463,32 +463,37 @@ function ChatScreen({ conv, onBack }: { conv: Conversation; onBack: () => void }
 // ─── SCRAPS SECTION (para usar dentro do ProfileScreen) ──────────────────────
 export function ScrapsSection({ userId, isMyProfile }: { userId: string; isMyProfile: boolean }) {
   const { user } = useAuthStore();
-  const [scraps, setScraps] = useState<Scrap[]>([]); // Inicialmente vazio, sem mock
+  const queryClient = useQueryClient();
   const [composing, setComposing] = useState(false);
   const [scrapText, setScrapText] = useState('');
-  const [isPrivate, setIsPrivate] = useState(false);
 
-  const sendScrap = () => {
-    if (!scrapText.trim()) return;
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    const newScrap: Scrap = {
-      id: Date.now().toString(), // melhor que Math.random()
-      from_user_id: user?.id || 'me',
-      from_username: user?.username || 'você',
-      from_name: user?.displayName || 'Você',
-      body: scrapText.trim(),
-      is_private: isPrivate,
-      created_at: new Date().toISOString(),
-    };
-    setScraps((prev) => [newScrap, ...prev]);
-    setScrapText('');
-    setComposing(false);
-  };
+  const { data, isLoading } = useQuery({
+    queryKey: ['scraps', userId],
+    queryFn: () => scrapsService.getUserScraps(userId),
+    select: (res: any) => {
+      const raw = res?.data ?? res ?? [];
+      return Array.isArray(raw) ? raw : [];
+    },
+    enabled: !!userId,
+  });
+  const scraps: Scrap[] = data ?? [];
 
-  const removeScrap = (id: string) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    setScraps((prev) => prev.filter((s) => s.id !== id));
-  };
+  const sendMutation = useMutation({
+    mutationFn: (body: string) => scrapsService.send(userId, body),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['scraps', userId] });
+      setScrapText('');
+      setComposing(false);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    },
+    onError: () => Alert.alert('Erro', 'Não foi possível enviar o recado.'),
+  });
+
+  const removeMutation = useMutation({
+    mutationFn: (scrapId: string) => scrapsService.remove(scrapId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['scraps', userId] }),
+    onError: () => Alert.alert('Erro', 'Não foi possível remover o recado.'),
+  });
 
   return (
     <View style={styles.scrapsSection}>
@@ -515,61 +520,58 @@ export function ScrapsSection({ userId, isMyProfile }: { userId: string; isMyPro
             autoFocus
           />
           <View style={styles.scrapComposerFooter}>
-            <TouchableOpacity
-              style={[styles.scrapPrivateBtn, isPrivate && styles.scrapPrivateBtnActive]}
-              onPress={() => setIsPrivate(!isPrivate)}
-            >
-              <Text style={{ fontSize: 12 }}>{isPrivate ? '🔒' : '👁'}</Text>
-              <Text style={[styles.scrapPrivateText, isPrivate && { color: Colors.accent }]}>
-                {isPrivate ? 'Privado' : 'Público'}
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.scrapCancelBtn} onPress={() => setComposing(false)}>
+            <TouchableOpacity style={styles.scrapCancelBtn} onPress={() => { setComposing(false); setScrapText(''); }}>
               <Text style={{ color: Colors.muted, fontSize: 13 }}>Cancelar</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.scrapSendBtn, !scrapText.trim() && { opacity: 0.4 }]}
-              onPress={sendScrap}
-              disabled={!scrapText.trim()}
+              style={[styles.scrapSendBtn, (!scrapText.trim() || sendMutation.isPending) && { opacity: 0.4 }]}
+              onPress={() => { if (scrapText.trim()) sendMutation.mutate(scrapText.trim()); }}
+              disabled={!scrapText.trim() || sendMutation.isPending}
             >
-              <Text style={styles.scrapSendText}>Enviar</Text>
+              <Text style={styles.scrapSendText}>{sendMutation.isPending ? 'Enviando...' : 'Enviar'}</Text>
             </TouchableOpacity>
           </View>
         </View>
       )}
 
       {/* Scraps list */}
-      {scraps.map((scrap) => (
-        <View key={scrap.id} style={styles.scrapCard}>
-          <Avatar
-            user={{
-              id: scrap.from_user_id,
-              username: scrap.from_username,
-              displayName: scrap.from_name,
-            } as any}
-            size={36}
-          />
-          <View style={styles.scrapContent}>
-            <View style={styles.scrapCardHeader}>
-              <Text style={styles.scrapAuthor}>{scrap.from_name}</Text>
-              {scrap.is_private && <Text style={{ fontSize: 11 }}>🔒</Text>}
-              <Text style={styles.scrapTime}>{timeAgo(scrap.created_at)}</Text>
-            </View>
-            <Text style={styles.scrapBody}>{scrap.body}</Text>
-          </View>
-          {(isMyProfile || scrap.from_user_id === 'me') && (
-            <TouchableOpacity onPress={() => removeScrap(scrap.id)} style={styles.scrapRemoveBtn}>
-              <Text style={{ color: Colors.muted, fontSize: 16 }}>✕</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-      ))}
-
-      {scraps.length === 0 && (
+      {isLoading ? (
+        <ActivityIndicator color={Colors.accent} style={{ marginVertical: 20 }} />
+      ) : scraps.length === 0 ? (
         <View style={styles.scrapsEmpty}>
           <Text style={{ fontSize: 32 }}>📭</Text>
           <Text style={styles.scrapsEmptyText}>Sem recados ainda</Text>
         </View>
+      ) : (
+        scraps.map((scrap: any) => (
+          <View key={scrap.id} style={styles.scrapCard}>
+            <Avatar
+              user={{
+                id: scrap.author_id ?? scrap.from_user_id,
+                username: scrap.author_username ?? scrap.from_username,
+                displayName: scrap.author_name ?? scrap.from_name,
+                avatar: scrap.author_avatar ?? scrap.from_avatar,
+              } as any}
+              size={36}
+            />
+            <View style={styles.scrapContent}>
+              <View style={styles.scrapCardHeader}>
+                <Text style={styles.scrapAuthor}>{scrap.author_name ?? scrap.from_name ?? scrap.author_username}</Text>
+                <Text style={styles.scrapTime}>{timeAgo(scrap.created_at)}</Text>
+              </View>
+              <Text style={styles.scrapBody}>{scrap.body}</Text>
+            </View>
+            {(isMyProfile || scrap.author_id === user?.id) && (
+              <TouchableOpacity
+                onPress={() => removeMutation.mutate(scrap.id)}
+                style={styles.scrapRemoveBtn}
+                disabled={removeMutation.isPending}
+              >
+                <Text style={{ color: Colors.muted, fontSize: 16 }}>✕</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        ))
       )}
     </View>
   );
@@ -578,30 +580,45 @@ export function ScrapsSection({ userId, isMyProfile }: { userId: string; isMyPro
 // ─── FANS SECTION (para usar dentro do ProfileScreen) ────────────────────────
 export function FansSection({ userId }: { userId: string }) {
   const { user } = useAuthStore();
-  const [isFan, setIsFan] = useState(false);
-  const [fansCount, setFansCount] = useState(48);
+  const queryClient = useQueryClient();
+  const isMyProfile = userId === (user as any)?.id;
 
-  const MOCK_FANS = [
-    { id: 'u1', username: 'mari_rpg', displayName: 'Mari RPG' },
-    { id: 'u2', username: 'luca.dev', displayName: 'Luca' },
-    { id: 'u3', username: 'rodrigao', displayName: 'Rodrigão' },
-    { id: 'u4', username: 'kae_plays', displayName: 'Kae' },
-  ];
+  const { data, isLoading } = useQuery({
+    queryKey: ['fans', userId],
+    queryFn: () => fansService.getUserFans(userId),
+    select: (res: any) => {
+      const raw = res?.data ?? res ?? [];
+      return Array.isArray(raw) ? raw : [];
+    },
+    enabled: !!userId,
+  });
+  const fans: any[] = data ?? [];
 
-  const toggleFan = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    setIsFan(!isFan);
-    setFansCount((c) => (isFan ? c - 1 : c + 1));
-  };
+  // Verifica se o usuário atual já é fã
+  const isFan = fans.some((f: any) => String(f.id ?? f.fan_id) === String((user as any)?.id));
+
+  const fanMutation = useMutation({
+    mutationFn: () => isFan ? fansService.stopBeingFan(userId) : fansService.becomeFan(userId),
+    onMutate: async () => {
+      // Otimista: invalida depois do retorno
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['fans', userId] }),
+    onError: () => Alert.alert('Erro', 'Não foi possível atualizar. Tente novamente.'),
+  });
+
+  const visibleFans = fans.slice(0, 4);
+  const extraCount = fans.length - 4;
 
   return (
     <View style={styles.fansSection}>
       <View style={styles.fansSectionHeader}>
-        <Text style={styles.fansTitle}>⭐ Fãs ({fansCount})</Text>
-        {userId !== user?.id && (
+        <Text style={styles.fansTitle}>⭐ Fãs ({fans.length})</Text>
+        {!isMyProfile && (
           <TouchableOpacity
             style={[styles.fanBtn, isFan && styles.fanBtnActive]}
-            onPress={toggleFan}
+            onPress={() => fanMutation.mutate()}
+            disabled={fanMutation.isPending}
           >
             <Text style={[styles.fanBtnText, isFan && styles.fanBtnTextActive]}>
               {isFan ? '⭐ Você é fã' : '☆ Ser fã'}
@@ -610,24 +627,41 @@ export function FansSection({ userId }: { userId: string }) {
         )}
       </View>
 
-      <View style={styles.fansGrid}>
-        {MOCK_FANS.map((fan) => (
-          <View key={fan.id} style={styles.fanItem}>
-            <Avatar user={fan as any} size={40} />
-            <Text style={styles.fanName} numberOfLines={1}>
-              {fan.displayName}
-            </Text>
-          </View>
-        ))}
-        {fansCount > 4 && (
-          <View style={styles.fanItem}>
-            <View style={styles.fanMoreBubble}>
-              <Text style={styles.fanMoreText}>+{fansCount - 4}</Text>
+      {isLoading ? (
+        <ActivityIndicator color={Colors.accent} style={{ marginVertical: 12 }} />
+      ) : fans.length === 0 ? (
+        <View style={styles.scrapsEmpty}>
+          <Text style={{ fontSize: 28 }}>⭐</Text>
+          <Text style={styles.scrapsEmptyText}>Nenhum fã ainda</Text>
+        </View>
+      ) : (
+        <View style={styles.fansGrid}>
+          {visibleFans.map((fan: any) => (
+            <View key={fan.id ?? fan.fan_id} style={styles.fanItem}>
+              <Avatar
+                user={{
+                  id: fan.id ?? fan.fan_id,
+                  username: fan.username,
+                  displayName: fan.display_name ?? fan.displayName,
+                  avatar: fan.avatar_url ?? fan.avatar,
+                } as any}
+                size={40}
+              />
+              <Text style={styles.fanName} numberOfLines={1}>
+                {fan.display_name ?? fan.username}
+              </Text>
             </View>
-            <Text style={styles.fanName}>ver todos</Text>
-          </View>
-        )}
-      </View>
+          ))}
+          {extraCount > 0 && (
+            <View style={styles.fanItem}>
+              <View style={styles.fanMoreBubble}>
+                <Text style={styles.fanMoreText}>+{extraCount}</Text>
+              </View>
+              <Text style={styles.fanName}>ver todos</Text>
+            </View>
+          )}
+        </View>
+      )}
     </View>
   );
 }

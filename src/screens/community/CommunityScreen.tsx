@@ -37,9 +37,10 @@ const ROLE_CONFIG: Record<string, { label: string; color: string; emoji: string 
   member: { label: 'Membro', color: Colors.muted, emoji: '' },
 };
 
-function formatCount(n: number): string {
+function formatCount(n: number | null | undefined): string {
+  if (n == null) return '0';
   if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
-  return String(n ?? 0);
+  return String(n);
 }
 
 function RoleBadge({ role }: { role: string }) {
@@ -263,12 +264,15 @@ export default function CommunityScreen() {
 
         {!isMember ? (
           <Button
-            label={isPrivate ? '✉️ Solicitar entrada' : '+ Entrar na comunidade'}
+            label={joinMutation.isPending
+              ? '...'
+              : isPrivate ? '✉️ Solicitar entrada' : '+ Entrar na comunidade'}
             onPress={() => {
+              if (joinMutation.isPending) return;
               Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
               joinMutation.mutate();
             }}
-            style={{ marginTop: Spacing.md }}
+            style={{ marginTop: Spacing.md, opacity: joinMutation.isPending ? 0.6 : 1 }}
           />
         ) : (
           <View style={styles.memberBadgeRow}>

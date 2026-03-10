@@ -4,6 +4,7 @@ import {
   RefreshControl, Animated, Modal, Share, Alert, Dimensions,
   Pressable, ActivityIndicator,
 } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -546,7 +547,12 @@ export default function FeedScreen() {
         isOwner={menuPost?.user?.id === String((user as any)?.id)}
         onDelete={handleDeletePost}
         onReport={() => Alert.alert('Denúncia enviada', 'Obrigado!')}
-        onCopyText={() => { if (menuPost?.text) Alert.alert('Copiado', menuPost.text.slice(0, 200)); }}
+        onCopyText={async () => {
+          if (menuPost?.text) {
+            await Clipboard.setStringAsync(menuPost.text);
+            Alert.alert('Copiado!', 'Texto copiado para a área de transferência.');
+          }
+        }}
       />
     </View>
   );

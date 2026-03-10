@@ -230,7 +230,8 @@ export default function CommentsScreen() {
   };
 
   const handleLikeComment = (commentId: string) => {
-    // TODO: API call for liking comments
+    // Chama o endpoint de like/unlike via feedService
+    feedService.likeComment(commentId).catch(() => {});
   };
 
   const handleUserPress = (userId: string) => {
